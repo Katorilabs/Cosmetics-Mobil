@@ -1,0 +1,27 @@
+{
+  "name": "cosmedia",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cosmedia cosmetics intelligence platform",
+  "type": "module",
+  "packageManager": "npm@11.16.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "workers/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @cosmedia/api",
+    "dev": "npm run dev --workspace @cosmedia/api",
+    "start": "npm run start --workspace @cosmedia/api",
+    "test": "npm run test --workspace @cosmedia/api",
+    "test:coverage": "npm run test:coverage --workspace @cosmedia/api",
+    "db:generate": "npm run db:generate --workspace @cosmedia/api",
+    "db:migrate": "npm run db:migrate --workspace @cosmedia/api",
+    "db:deploy": "npm run db:deploy --workspace @cosmedia/api",
+    "db:studio": "npm run db:studio --workspace @cosmedia/api"
+  }
+}
