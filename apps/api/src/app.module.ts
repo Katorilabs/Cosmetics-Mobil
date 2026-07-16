@@ -4,6 +4,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { configuration, validateEnvironment } from './config/configuration.js';
 import { DatabaseModule } from './database/database.module.js';
+import { AdminModule } from './modules/admin/admin.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { ProductsModule } from './modules/products/products.module.js';
 
@@ -26,6 +27,7 @@ import { ProductsModule } from './modules/products/products.module.js';
       ],
     }),
     DatabaseModule,
+    AdminModule,
     HealthModule,
     ProductsModule,
   ],

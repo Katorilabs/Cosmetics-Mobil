@@ -35,6 +35,7 @@ async function bootstrap(): Promise<void> {
       .setDescription('Versioned API for products, INCI data and skin-profile matching')
       .setVersion('1.0')
       .addBearerAuth()
+      .addApiKey({ type: 'apiKey', in: 'header', name: 'x-admin-key' }, 'admin-key')
       .build();
     SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, swaggerConfig));
   }

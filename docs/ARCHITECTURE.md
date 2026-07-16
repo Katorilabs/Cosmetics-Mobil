@@ -27,6 +27,7 @@ Scraper worker (separate process, later)
 
 - `health`: runtime and database readiness.
 - `products`: public product catalogue and active formula reads.
+- `admin`: protected catalogue writes, formula versioning and product lifecycle.
 - Future `identity`: external authentication identities and account lifecycle.
 - Future `profiles`: skin profile and preference management.
 - Future `reviews`: profile snapshots, moderation and aggregate experience metrics.
@@ -49,6 +50,7 @@ internal files; shared behavior must be exposed by the owning module.
 - Scores are snapshots tied to a formula and scoring version. Explanations and
   confidence are stored with the number shown to a user.
 - Scraped data never becomes public automatically. It enters a review workflow.
+- Demo seed data is idempotent and clearly separated from verified production data.
 
 ## API rules
 
@@ -66,6 +68,9 @@ internal files; shared behavior must be exposed by the owning module.
 - Secrets belong in environment variables and are never committed.
 - Authentication will use a managed identity provider; the API will store only its
   external subject identifier and application profile data.
+- Until managed roles are introduced, admin catalogue routes require a long
+  environment-provided API key. This is a development boundary, not the final
+  production authorization design.
 - URLs and scraped payloads must be validated before the worker fetches or stores
   them. Private-network destinations must be rejected to prevent SSRF.
 - User-generated reviews require output encoding, moderation and abuse reporting.

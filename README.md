@@ -57,6 +57,11 @@ kural sürümü ve güven seviyesi kullanıcıya açıklanacaktır.
 - PostgreSQL ve Prisma veri katmanı
 - İlk veritabanı migration'ı
 - Ürün listeleme ve ürün detay okuma modülü
+- Tekrar çalıştırılabilir demo katalog seed'i (2 ürün, 7 INCI kaydı)
+- Admin marka/kategori oluşturma ve listeleme endpointleri
+- Transactional ürün + varyant + ilk formül oluşturma
+- Ürün güncelleme, arşivleme ve yeni formül versiyonu ekleme
+- Environment tabanlı geçici admin API key guard
 - API/veritabanı health kontrolü
 - Swagger/OpenAPI dokümantasyonu
 - DTO doğrulama ve bilinmeyen alanları reddetme
@@ -70,9 +75,8 @@ kural sürümü ve güven seviyesi kullanıcıya açıklanacaktır.
 
 Henüz hazır olmayan ana parçalar:
 
-- Kimlik doğrulama ve yetkilendirme
-- Admin ürün yönetimi
-- CSV seed/import akışı
+- Kalıcı kullanıcı/rol tabanlı kimlik doğrulama ve yetkilendirme
+- CSV ürün/INCI import akışı
 - Mobil Expo uygulaması
 - Scraper worker ve moderasyon ekranı
 - Skor hesaplama motoru
@@ -211,10 +215,12 @@ PostgreSQL kurulumları tarafından kullanılıyor olabilir.
 ```bash
 npm run db:generate
 npm run db:deploy
+npm run db:seed
 ```
 
 `db:deploy`, repository'de bulunan migration'ları uygular. İlk kurulumda yeniden
-`init` migration'ı oluşturmayın.
+`init` migration'ı oluşturmayın. `db:seed` iki yayınlanmış demo ürün ve bunların
+normalize INCI kayıtlarını oluşturur; komut tekrar çalıştırıldığında duplicate üretmez.
 
 ## Projeyi çalıştırma
 
@@ -265,6 +271,29 @@ Mevcut public endpointler:
 | GET | `/api/v1/products` | Yayındaki ürünleri sayfalı listeler |
 | GET | `/api/v1/products/:id` | Ürün, varyant, görsel ve aktif INCI formülü |
 
+Admin katalog endpointleri `x-admin-key` header'ı gerektirir:
+
+| Metot | Endpoint | Açıklama |
+| --- | --- | --- |
+| GET | `/api/v1/admin/catalog/brands` | Markaları listeler |
+| POST | `/api/v1/admin/catalog/brands` | Marka oluşturur |
+| GET | `/api/v1/admin/catalog/categories` | Kategorileri listeler |
+| POST | `/api/v1/admin/catalog/categories` | Kategori oluşturur |
+| POST | `/api/v1/admin/catalog/products` | Ürün, ilk varyant ve ilk formülü transaction içinde oluşturur |
+| PATCH | `/api/v1/admin/catalog/products/:id` | Ürün bilgilerini veya yayın durumunu günceller |
+| DELETE | `/api/v1/admin/catalog/products/:id` | Ürünü fiziksel olarak silmeden arşivler |
+| POST | `/api/v1/admin/catalog/variants/:variantId/formulas` | Yeni versiyonlanmış INCI formülü ekler |
+
+Lokal admin örneği:
+
+```bash
+curl -H "x-admin-key: local-development-admin-key-change-me" \
+  "http://localhost:3000/api/v1/admin/catalog/brands"
+```
+
+Bu anahtar yalnızca katalog temeli geliştirilirken kullanılan geçici korumadır.
+Production öncesinde managed auth ve rol/yetki kontrolüyle değiştirilecektir.
+
 Ürün listeleme query parametreleri:
 
 | Parametre | Tip | Varsayılan | Açıklama |
@@ -281,7 +310,8 @@ Mevcut public endpointler:
 curl "http://localhost:3000/api/v1/products?page=1&limit=20"
 ```
 
-Başlangıçta ürün verisi olmadığı için doğru yanıtın `data: []` olması normaldir.
+Seed çalıştırıldıysa listede iki demo ürün görünür. Seed çalıştırılmadıysa `data: []`
+yanıtı normaldir.
 
 ## Veri modeli
 
@@ -326,6 +356,7 @@ User ── SkinProfile
 | `CORS_ORIGINS` | `http://localhost:8081,...` | Virgülle ayrılmış izinli origin listesi |
 | `API_RATE_LIMIT_TTL_MS` | `60000` | Rate limit zaman penceresi |
 | `API_RATE_LIMIT_LIMIT` | `100` | Pencere başına maksimum istek |
+| `ADMIN_API_KEY` | `local-development-...` | Geçici admin katalog anahtarı; en az 32 karakter |
 
 Eksik veya geçersiz environment değeri olduğunda API sessizce yanlış ayarla açılmaz;
 başlangıç sırasında anlaşılır bir hata vererek kapanır.
@@ -341,6 +372,7 @@ başlangıç sırasında anlaşılır bir hata vererek kapanır.
 | `npm run test:coverage` | Coverage raporu üretir |
 | `npm run db:generate` | Prisma Client üretir |
 | `npm run db:deploy` | Mevcut migration'ları uygular |
+| `npm run db:seed` | İdempotent demo katalog verisini yükler |
 | `npm run db:migrate -- --name <ad>` | Yeni migration oluşturur ve uygular |
 | `npm run db:studio` | Prisma Studio arayüzünü açar |
 
@@ -428,12 +460,14 @@ Pull request açıklamasında şunlar bulunmalı:
 
 ## Yol haritası
 
-### Aşama 1 — Katalog temeli (sıradaki)
+### Aşama 1 — Katalog temeli (devam ediyor)
 
-- Örnek ve test edilebilir seed veri seti
+- [x] Örnek ve test edilebilir seed veri seti
 - CSV ürün/INCI import servisi
-- Marka, kategori, ürün, varyant ve formül CRUD işlemleri
-- Admin authorization guard
+- [x] Marka ve kategori oluşturma/listeleme
+- [x] Transactional ürün, varyant ve ilk formül oluşturma
+- [x] Ürün güncelleme, arşivleme ve formül versiyonu ekleme
+- [x] Geçici admin authorization guard
 - Ortak hata yanıt formatı
 - Integration/e2e testleri
 
@@ -517,8 +551,14 @@ Proje varsayılan olarak host üzerinde `55432` kullanır. Bu port da doluysa he
 
 ### API açılıyor fakat ürün listesi boş
 
-Seed/import sistemi henüz eklenmediği için bu beklenen davranıştır. Health endpoint'i
-`database: "up"` dönüyorsa backend doğru çalışıyor demektir.
+Demo veriyi yükleyip tekrar deneyin:
+
+```bash
+npm run db:seed
+```
+
+Health endpoint'i `database: "up"` dönüyor ve seed başarılı tamamlanıyorsa backend
+doğru çalışıyor demektir.
 
 ### Temiz kurulumdan sonra Prisma tipleri bulunamıyor
 

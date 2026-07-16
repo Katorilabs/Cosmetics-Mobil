@@ -7,6 +7,7 @@ const environmentSchema = z.object({
   CORS_ORIGINS: z.string().default('http://localhost:8081,http://localhost:19006'),
   API_RATE_LIMIT_TTL_MS: z.coerce.number().int().positive().default(60_000),
   API_RATE_LIMIT_LIMIT: z.coerce.number().int().positive().default(100),
+  ADMIN_API_KEY: z.string().min(32).optional(),
 });
 
 export type Environment = z.infer<typeof environmentSchema>;
@@ -38,6 +39,9 @@ export function configuration(): Record<string, unknown> {
     rateLimit: {
       ttlMs: env.API_RATE_LIMIT_TTL_MS,
       limit: env.API_RATE_LIMIT_LIMIT,
+    },
+    admin: {
+      apiKey: env.ADMIN_API_KEY,
     },
   };
 }

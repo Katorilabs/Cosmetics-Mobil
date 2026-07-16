@@ -12,6 +12,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
+    "db:seed": "prisma db seed",
     "db:studio": "prisma studio"
   },
   "dependencies": {
@@ -41,6 +42,7 @@
     "prisma": "7.8.0",
     "ts-jest": "29.4.11",
     "ts-node": "10.9.2",
+    "tsx": "4.23.1",
     "typescript": "6.0.3"
   }
 }
