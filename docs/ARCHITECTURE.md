@@ -59,8 +59,8 @@ internal files; shared behavior must be exposed by the owning module.
   introduced.
 - Request DTOs are allow-listed; unknown properties are rejected.
 - Pagination is mandatory for collections and capped at 100 records per request.
-- Error payloads use NestJS HTTP errors initially; a stable application error
-  envelope will be added before the mobile client is released.
+- Errors use a stable envelope with application code, safe message, HTTP status,
+  optional details, path, timestamp and request ID. Internal errors are not exposed.
 
 ## Security baseline
 
@@ -74,6 +74,9 @@ internal files; shared behavior must be exposed by the owning module.
 - URLs and scraped payloads must be validated before the worker fetches or stores
   them. Private-network destinations must be rejected to prevent SSRF.
 - User-generated reviews require output encoding, moderation and abuse reporting.
+- CSV catalogue imports are limited to 1 MB/1,000 rows, fully validated before
+  writes, and applied in one transaction. Re-imports update stable product and
+  variant keys without duplicating unchanged formula versions.
 
 ## Deployment units
 
@@ -81,3 +84,14 @@ The API and future scraper worker use separate commands and can scale separately
 PostgreSQL and object storage should be managed services in production. Redis is
 not required for the current catalogue API; it is included locally to establish the
 future job boundary.
+
+## Verification strategy
+
+- Unit tests validate isolated guards, catalogue services, CSV parsing and the
+  shared HTTP error contract.
+- E2E tests boot the NestJS application with the same production bootstrap
+  configuration and send real HTTP requests through Supertest.
+- Catalogue E2E tests use PostgreSQL, apply committed migrations, verify import
+  idempotency and remove only their namespaced fixture records afterward.
+- GitHub Actions provisions a clean PostgreSQL 17 service for every pull request
+  and `main` push before running unit tests, E2E tests and the production build.

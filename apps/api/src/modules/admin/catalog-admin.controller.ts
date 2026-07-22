@@ -9,9 +9,10 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { ApiBody, ApiConsumes, ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { AdminKeyGuard } from './admin-key.guard.js';
 import { CatalogAdminService } from './catalog-admin.service.js';
+import { CatalogCsvImportService } from './catalog-csv-import.service.js';
 import { CreateBrandDto } from './dto/create-brand.dto.js';
 import { CreateCategoryDto } from './dto/create-category.dto.js';
 import { CreateFormulaDto } from './dto/create-formula.dto.js';
@@ -23,7 +24,10 @@ import { UpdateProductDto } from './dto/update-product.dto.js';
 @UseGuards(AdminKeyGuard)
 @Controller({ path: 'admin/catalog', version: '1' })
 export class CatalogAdminController {
-  constructor(private readonly catalog: CatalogAdminService) {}
+  constructor(
+    private readonly catalog: CatalogAdminService,
+    private readonly csvImport: CatalogCsvImportService,
+  ) {}
 
   @Get('brands')
   @ApiOperation({ summary: 'List catalogue brands' })
@@ -53,6 +57,20 @@ export class CatalogAdminController {
   @ApiOperation({ summary: 'Create a product, first variant and first formula atomically' })
   createProduct(@Body() input: CreateProductDto) {
     return this.catalog.createProduct(input);
+  }
+
+  @Post('imports/products')
+  @ApiConsumes('text/csv', 'application/csv')
+  @ApiBody({
+    schema: {
+      type: 'string',
+      format: 'binary',
+      description: 'UTF-8 CSV content using the documented Cosmedia columns',
+    },
+  })
+  @ApiOperation({ summary: 'Import validated catalogue products from CSV atomically' })
+  importProducts(@Body() csvContent: string) {
+    return this.csvImport.importProducts(csvContent);
   }
 
   @Patch('products/:id')

@@ -11,6 +11,21 @@ jobs:
     timeout-minutes: 10
     env:
       DATABASE_URL: postgresql://cosmedia:cosmedia@localhost:55432/cosmedia
+      ADMIN_API_KEY: ci-admin-key-with-at-least-32-characters
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: cosmedia
+          POSTGRES_USER: cosmedia
+          POSTGRES_PASSWORD: cosmedia
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U cosmedia -d cosmedia"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,5 +34,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run db:generate
+      - run: npm run db:deploy
       - run: npm test
+      - run: npm run test:e2e
       - run: npm run build

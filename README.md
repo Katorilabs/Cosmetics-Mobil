@@ -16,6 +16,8 @@ admin paneli ve scraper worker sonraki aşamalarda aynı monorepo içine eklenec
 - [İlk kurulum](#ilk-kurulum)
 - [Projeyi çalıştırma](#projeyi-çalıştırma)
 - [API endpointleri](#api-endpointleri)
+- [CSV katalog importu](#csv-katalog-importu)
+- [API hata formatı](#api-hata-formatı)
 - [Veri modeli](#veri-modeli)
 - [Ortam değişkenleri](#ortam-değişkenleri)
 - [Komutlar](#komutlar)
@@ -62,6 +64,9 @@ kural sürümü ve güven seviyesi kullanıcıya açıklanacaktır.
 - Transactional ürün + varyant + ilk formül oluşturma
 - Ürün güncelleme, arşivleme ve yeni formül versiyonu ekleme
 - Environment tabanlı geçici admin API key guard
+- UTF-8 CSV ile atomik ve idempotent katalog importu
+- Dosya/satır/hücre limitleri ve satır bazlı CSV doğrulama raporu
+- Request ID içeren ortak API hata formatı
 - API/veritabanı health kontrolü
 - Swagger/OpenAPI dokümantasyonu
 - DTO doğrulama ve bilinmeyen alanları reddetme
@@ -76,7 +81,6 @@ kural sürümü ve güven seviyesi kullanıcıya açıklanacaktır.
 Henüz hazır olmayan ana parçalar:
 
 - Kalıcı kullanıcı/rol tabanlı kimlik doğrulama ve yetkilendirme
-- CSV ürün/INCI import akışı
 - Mobil Expo uygulaması
 - Scraper worker ve moderasyon ekranı
 - Skor hesaplama motoru
@@ -94,7 +98,7 @@ Henüz hazır olmayan ana parçalar:
 | Veritabanı | PostgreSQL 17 | İlişkisel ürün, INCI, profil ve yorum verileri |
 | ORM | Prisma 7 | Şema, migration ve tip güvenli sorgular |
 | Kuyruk | Redis (hazır, henüz bağlı değil) | Gelecekte scraper/BullMQ işleri |
-| Test | Jest | Unit ve ileride integration/e2e testleri |
+| Test | Jest + Supertest | Unit ve gerçek PostgreSQL üzerinde API e2e testleri |
 | Lokal servisler | Docker Compose | Ekipte aynı PostgreSQL/Redis ortamı |
 | CI | GitHub Actions | Her push/PR için test ve build |
 
@@ -154,7 +158,7 @@ kabul etmez. Repository içindeki `.nvmrc` ekipte aynı Node majör sürümünü
 ### 2. Repository'yi alın
 
 ```bash
-git clone https://github.com/Elifyldz1/Cosmetics-Mobil.git
+git clone https://github.com/Katorilabs/Cosmetics-Mobil.git
 cd Cosmetics-Mobil
 ```
 
@@ -280,6 +284,7 @@ Admin katalog endpointleri `x-admin-key` header'ı gerektirir:
 | GET | `/api/v1/admin/catalog/categories` | Kategorileri listeler |
 | POST | `/api/v1/admin/catalog/categories` | Kategori oluşturur |
 | POST | `/api/v1/admin/catalog/products` | Ürün, ilk varyant ve ilk formülü transaction içinde oluşturur |
+| POST | `/api/v1/admin/catalog/imports/products` | `text/csv` katalog dosyasını atomik olarak import eder |
 | PATCH | `/api/v1/admin/catalog/products/:id` | Ürün bilgilerini veya yayın durumunu günceller |
 | DELETE | `/api/v1/admin/catalog/products/:id` | Ürünü fiziksel olarak silmeden arşivler |
 | POST | `/api/v1/admin/catalog/variants/:variantId/formulas` | Yeni versiyonlanmış INCI formülü ekler |
@@ -312,6 +317,92 @@ curl "http://localhost:3000/api/v1/products?page=1&limit=20"
 
 Seed çalıştırıldıysa listede iki demo ürün görünür. Seed çalıştırılmadıysa `data: []`
 yanıtı normaldir.
+
+## CSV katalog importu
+
+Örnek dosya:
+[`apps/api/prisma/data/products.example.csv`](apps/api/prisma/data/products.example.csv)
+
+Import isteği:
+
+```bash
+curl -X POST \
+  -H "content-type: text/csv" \
+  -H "x-admin-key: local-development-admin-key-change-me" \
+  --data-binary @apps/api/prisma/data/products.example.csv \
+  "http://localhost:3000/api/v1/admin/catalog/imports/products"
+```
+
+CSV kolonları:
+
+| Kolon | Zorunlu | Açıklama |
+| --- | --- | --- |
+| `brand` | Evet | Marka adı |
+| `brand_website` | Hayır | Protokollü marka URL'si |
+| `category` | Evet | Kategori adı |
+| `product_name` | Evet | Ürün adı ve idempotency slug kaynağı |
+| `description` | Hayır | Ürün açıklaması; en fazla 5.000 karakter |
+| `status` | Hayır | `DRAFT`, `PUBLISHED`, `ARCHIVED`; boşsa `DRAFT` |
+| `variant_name` | Evet | Ör. `50 ml`; ürün içinde benzersiz |
+| `size_value` | Hayır | En fazla iki ondalıklı pozitif değer |
+| `size_unit` | Hayır | `ml`, `g` vb. |
+| `barcode` | Hayır | 8–14 rakam |
+| `image_url` | Hayır | Protokollü görsel URL'si |
+| `raw_inci` | Hayır | Etiketteki ham INCI metni; virgül içeriyorsa CSV'de tırnaklanmalı |
+| `inci_names` | Evet | `AQUA\|GLYCERIN\|NIACINAMIDE` biçiminde normalize adlar |
+| `source_name` | Hayır | Verinin kaynağı |
+| `source_url` | Hayır | Protokollü kaynak URL'si |
+| `confidence` | Hayır | `0` ile `1` arasında güven seviyesi |
+
+Güvenlik ve tutarlılık kuralları:
+
+- Yalnızca UTF-8 `text/csv` veya `application/csv` gövdesi kabul edilir.
+- Maksimum dosya boyutu 1 MB, maksimum veri satırı 1.000'dir.
+- Eksik/tekrarlı header, bozuk kolon sayısı ve null byte reddedilir.
+- Tüm satırlar veritabanına geçmeden önce doğrulanır.
+- Dosya tek transaction içinde uygulanır; bir DB hatasında tamamı geri alınır.
+- Aynı ürün/varyant güncellenir; aynı ham INCI tekrar import edilirse yeni formül
+  versiyonu oluşturulmaz.
+- Ham INCI değişirse eski aktif formül pasifleştirilir ve yeni sürüm açılır.
+
+Başarılı yanıt örneği:
+
+```json
+{
+  "totalRows": 2,
+  "productsCreated": 2,
+  "productsUpdated": 0,
+  "variantsCreated": 2,
+  "variantsUpdated": 0,
+  "formulasCreated": 2,
+  "formulasUnchanged": 0,
+  "ingredientLinksCreated": 7
+}
+```
+
+## API hata formatı
+
+Tüm API hataları aynı zarfı kullanır:
+
+```json
+{
+  "error": {
+    "code": "CSV_ROWS_INVALID",
+    "message": "One or more CSV rows are invalid",
+    "status": 400,
+    "details": {
+      "rows": [{ "row": 2, "fields": [] }]
+    },
+    "path": "/api/v1/admin/catalog/imports/products",
+    "timestamp": "2026-07-19T16:42:50.897Z",
+    "requestId": "376a05aa-9a03-4c21-ba7a-2e5a9a2912c1"
+  }
+}
+```
+
+`x-request-id` response header'ı ile gövdedeki `requestId` aynıdır. İstemci geçerli
+bir `x-request-id` gönderirse hata yanıtında korunur. Beklenmeyen `500` hatalarında
+iç exception mesajı kullanıcıya açılmaz.
 
 ## Veri modeli
 
@@ -401,10 +492,15 @@ Lokal doğrulama:
 
 ```bash
 npm test
+npm run test:e2e
 npm run build
 npx prisma validate --config apps/api/prisma.config.ts
 git diff --check
 ```
+
+`npm run test:e2e` için Docker PostgreSQL servisi çalışıyor ve migration'lar uygulanmış
+olmalıdır. Test paketi yalnızca `e2e-` önekli kendi katalog verisini oluşturur ve test
+sonunda temizler; seed veya geliştirici verilerine dokunmaz.
 
 GitHub Actions şu durumlarda otomatik çalışır:
 
@@ -415,9 +511,12 @@ CI şu kontrolleri yapar:
 
 1. Node 24 ortamını kurar.
 2. `npm ci` ile kilitli bağımlılıkları yükler.
-3. Prisma Client üretir.
-4. Testleri çalıştırır.
-5. Production build alır.
+3. İzole bir PostgreSQL 17 servisini hazırlar.
+4. Prisma Client üretir ve commit edilmiş migration'ları uygular.
+5. Unit testleri çalıştırır.
+6. Health, admin yetkilendirme, ortak hata formatı, CSV import/idempotency ve public
+   katalog görünürlüğünü gerçek HTTP istekleriyle test eder.
+7. Production build alır.
 
 ## Ekip çalışma düzeni
 
@@ -460,16 +559,16 @@ Pull request açıklamasında şunlar bulunmalı:
 
 ## Yol haritası
 
-### Aşama 1 — Katalog temeli (devam ediyor)
+### Aşama 1 — Katalog temeli (tamamlandı)
 
 - [x] Örnek ve test edilebilir seed veri seti
-- CSV ürün/INCI import servisi
+- [x] CSV ürün/INCI import servisi
 - [x] Marka ve kategori oluşturma/listeleme
 - [x] Transactional ürün, varyant ve ilk formül oluşturma
 - [x] Ürün güncelleme, arşivleme ve formül versiyonu ekleme
 - [x] Geçici admin authorization guard
-- Ortak hata yanıt formatı
-- Integration/e2e testleri
+- [x] Ortak hata yanıt formatı
+- [x] PostgreSQL integration/e2e testleri ve CI servisi
 
 ### Aşama 2 — Kullanıcı ve profil
 

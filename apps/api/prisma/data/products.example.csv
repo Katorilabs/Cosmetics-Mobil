@@ -1,0 +1,3 @@
+brand,brand_website,category,product_name,description,status,variant_name,size_value,size_unit,barcode,image_url,raw_inci,inci_names,source_name,source_url,confidence
+Cosmedia Demo Lab,https://example.com,Serum,Barrier Support Serum,CSV import akışını doğrulayan demo serum,PUBLISHED,30 ml,30.00,ml,8690000000010,,"AQUA, GLYCERIN, NIACINAMIDE, PANTHENOL",AQUA|GLYCERIN|NIACINAMIDE|PANTHENOL,Cosmedia CSV example,https://example.com/barrier-support-serum,0.95
+Cosmedia Demo Lab,https://example.com,Güneş Koruyucu,Daily Shield Fluid,CSV import akışını doğrulayan demo güneş koruyucu,DRAFT,50 ml,50.00,ml,8690000000011,,"AQUA, GLYCERIN, PANTHENOL",AQUA|GLYCERIN|PANTHENOL,Cosmedia CSV example,https://example.com/daily-shield-fluid,0.80
