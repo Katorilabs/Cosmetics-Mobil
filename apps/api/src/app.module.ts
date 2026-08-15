@@ -6,7 +6,9 @@ import { configuration, validateEnvironment } from './config/configuration.js';
 import { DatabaseModule } from './database/database.module.js';
 import { AdminModule } from './modules/admin/admin.module.js';
 import { HealthModule } from './modules/health/health.module.js';
+import { IdentityModule } from './modules/identity/identity.module.js';
 import { ProductsModule } from './modules/products/products.module.js';
+import { ProfilesModule } from './modules/profiles/profiles.module.js';
 
 @Module({
   imports: [
@@ -29,7 +31,9 @@ import { ProductsModule } from './modules/products/products.module.js';
     DatabaseModule,
     AdminModule,
     HealthModule,
+    IdentityModule,
     ProductsModule,
+    ProfilesModule,
   ],
   providers: [
     {

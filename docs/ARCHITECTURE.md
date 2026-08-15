@@ -28,8 +28,8 @@ Scraper worker (separate process, later)
 - `health`: runtime and database readiness.
 - `products`: public product catalogue and active formula reads.
 - `admin`: protected catalogue writes, formula versioning and product lifecycle.
-- Future `identity`: external authentication identities and account lifecycle.
-- Future `profiles`: skin profile and preference management.
+- `identity`: OIDC token validation, external subject mapping and current-user data.
+- `profiles`: authenticated skin profile and ingredient preferences.
 - Future `reviews`: profile snapshots, moderation and aggregate experience metrics.
 - Future `scoring`: versioned, explainable formula/profile score calculation.
 - Future `moderation`: approval workflow for imported and scraped data.
@@ -66,8 +66,14 @@ internal files; shared behavior must be exposed by the owning module.
 
 - Helmet security headers, explicit CORS origins and API throttling are enabled.
 - Secrets belong in environment variables and are never committed.
-- Authentication will use a managed identity provider; the API will store only its
-  external subject identifier and application profile data.
+- Authentication uses provider-neutral OIDC access tokens. The API verifies the
+  signature through an administrator-configured JWKS URL and validates issuer,
+  audience, expiry and an explicit asymmetric algorithm allow-list.
+- The API stores only the verified external subject and application profile data.
+  Email is synchronized only when the identity provider marks it verified.
+- Production refuses to start without the complete OIDC configuration and requires
+  HTTPS for the configured JWKS endpoint. Remote keys are cached and rotated by the
+  JOSE verifier; token-provided key URLs are never trusted.
 - Until managed roles are introduced, admin catalogue routes require a long
   environment-provided API key. This is a development boundary, not the final
   production authorization design.
@@ -87,11 +93,12 @@ future job boundary.
 
 ## Verification strategy
 
-- Unit tests validate isolated guards, catalogue services, CSV parsing and the
-  shared HTTP error contract.
+- Unit tests validate isolated guards, profile normalization, catalogue services,
+  CSV parsing and the shared HTTP error contract.
 - E2E tests boot the NestJS application with the same production bootstrap
   configuration and send real HTTP requests through Supertest.
-- Catalogue E2E tests use PostgreSQL, apply committed migrations, verify import
-  idempotency and remove only their namespaced fixture records afterward.
+- E2E tests use PostgreSQL, apply committed migrations, verify catalogue import
+  idempotency plus authenticated user/profile flows, and remove only namespaced
+  fixture records afterward.
 - GitHub Actions provisions a clean PostgreSQL 17 service for every pull request
   and `main` push before running unit tests, E2E tests and the production build.

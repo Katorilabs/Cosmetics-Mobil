@@ -16,6 +16,7 @@ admin paneli ve scraper worker sonraki aşamalarda aynı monorepo içine eklenec
 - [İlk kurulum](#ilk-kurulum)
 - [Projeyi çalıştırma](#projeyi-çalıştırma)
 - [API endpointleri](#api-endpointleri)
+- [Kimlik doğrulama kurulumu](#kimlik-doğrulama-kurulumu)
 - [CSV katalog importu](#csv-katalog-importu)
 - [API hata formatı](#api-hata-formatı)
 - [Veri modeli](#veri-modeli)
@@ -67,6 +68,9 @@ kural sürümü ve güven seviyesi kullanıcıya açıklanacaktır.
 - UTF-8 CSV ile atomik ve idempotent katalog importu
 - Dosya/satır/hücre limitleri ve satır bazlı CSV doğrulama raporu
 - Request ID içeren ortak API hata formatı
+- OIDC/JWKS tabanlı, sağlayıcıdan bağımsız Bearer token doğrulaması
+- İlk doğrulanmış istekte idempotent uygulama kullanıcısı oluşturma/eşleme
+- Cilt tipi, endişeler, alerjiler ve kaçınılan INCI profil endpointleri
 - API/veritabanı health kontrolü
 - Swagger/OpenAPI dokümantasyonu
 - DTO doğrulama ve bilinmeyen alanları reddetme
@@ -80,7 +84,8 @@ kural sürümü ve güven seviyesi kullanıcıya açıklanacaktır.
 
 Henüz hazır olmayan ana parçalar:
 
-- Kalıcı kullanıcı/rol tabanlı kimlik doğrulama ve yetkilendirme
+- Managed auth sağlayıcısındaki login/kayıt ekranları ve rol yönetimi
+- Sağlayıcı hesabı ile uygulama verisini birlikte silen hesap kapatma akışı
 - Mobil Expo uygulaması
 - Scraper worker ve moderasyon ekranı
 - Skor hesaplama motoru
@@ -97,6 +102,7 @@ Henüz hazır olmayan ana parçalar:
 | API | REST + OpenAPI | Mobil istemciyle açık ve versiyonlu sözleşme |
 | Veritabanı | PostgreSQL 17 | İlişkisel ürün, INCI, profil ve yorum verileri |
 | ORM | Prisma 7 | Şema, migration ve tip güvenli sorgular |
+| Auth | OIDC + JWKS + jose | Sağlayıcıdan bağımsız access token doğrulaması |
 | Kuyruk | Redis (hazır, henüz bağlı değil) | Gelecekte scraper/BullMQ işleri |
 | Test | Jest + Supertest | Unit ve gerçek PostgreSQL üzerinde API e2e testleri |
 | Lokal servisler | Docker Compose | Ekipte aynı PostgreSQL/Redis ortamı |
@@ -119,6 +125,8 @@ cosmedia/
 │       │   ├── generated/        # Prisma Client; Git'e eklenmez
 │       │   └── modules/
 │       │       ├── health/
+│       │       ├── identity/
+│       │       ├── profiles/
 │       │       └── products/
 │       ├── jest.config.cjs
 │       └── package.json
@@ -275,6 +283,35 @@ Mevcut public endpointler:
 | GET | `/api/v1/products` | Yayındaki ürünleri sayfalı listeler |
 | GET | `/api/v1/products/:id` | Ürün, varyant, görsel ve aktif INCI formülü |
 
+Kullanıcı endpointleri `Authorization: Bearer <access-token>` header'ı gerektirir:
+
+| Metot | Endpoint | Açıklama |
+| --- | --- | --- |
+| GET | `/api/v1/me` | Doğrulanmış kullanıcıyı getirir; ilk istekte uygulama kaydını oluşturur |
+| PATCH | `/api/v1/me` | Kullanıcının görünen adını günceller veya temizler |
+| GET | `/api/v1/me/skin-profile` | Mevcut cilt profilini getirir |
+| PUT | `/api/v1/me/skin-profile` | Cilt profilini oluşturur veya tamamen günceller |
+| DELETE | `/api/v1/me/skin-profile` | Cilt profilini idempotent olarak siler |
+
+`PUT /me/skin-profile`; `DRY`, `OILY`, `COMBINATION`, `NORMAL`, `SENSITIVE` cilt
+tiplerini ve şemada tanımlı endişeleri kabul eder. Kaçınılan INCI adları trim edilir,
+boşlukları normalize edilir ve büyük harfe çevrilir. Bilinmeyen alanlar reddedilir.
+
+Örnek:
+
+```bash
+curl -X PUT \
+  -H "Authorization: Bearer <access-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "skinType": "COMBINATION",
+    "concerns": ["ACNE", "LARGE_PORES"],
+    "allergies": ["Fragrance"],
+    "avoidInci": ["PARFUM", "ALCOHOL DENAT."]
+  }' \
+  "http://localhost:3000/api/v1/me/skin-profile"
+```
+
 Admin katalog endpointleri `x-admin-key` header'ı gerektirir:
 
 | Metot | Endpoint | Açıklama |
@@ -317,6 +354,34 @@ curl "http://localhost:3000/api/v1/products?page=1&limit=20"
 
 Seed çalıştırıldıysa listede iki demo ürün görünür. Seed çalıştırılmadıysa `data: []`
 yanıtı normaldir.
+
+## Kimlik doğrulama kurulumu
+
+API belirli bir auth firmasının SDK'sına bağlı değildir. Seçilen managed auth
+sağlayıcısının OIDC ayarlarından şu üç değer alınır ve `.env` dosyasına birlikte
+yazılır:
+
+```dotenv
+AUTH_ISSUER=https://identity.example.com/
+AUTH_AUDIENCE=cosmedia-api
+AUTH_JWKS_URL=https://identity.example.com/.well-known/jwks.json
+AUTH_ALLOWED_ALGORITHMS=RS256
+```
+
+- Mobil istemci API'ye **access token** gönderir; ID token API yetkilendirmesi için
+  kullanılmaz.
+- `AUTH_ISSUER` ve `AUTH_AUDIENCE`, token claim'leriyle karakter karakter eşleşmelidir.
+- JWKS adresi yalnızca environment üzerinden güvenilir kabul edilir; token içindeki
+  harici anahtar adresleri kullanılmaz.
+- Production ortamında OIDC değerleri zorunludur ve JWKS adresi HTTPS olmalıdır.
+- İmza, süre, issuer, audience ve izinli algoritma geçmeden kullanıcı oluşturulmaz.
+- Doğrulanmış ilk istekte `sub` claim'iyle uygulama kullanıcısı idempotent olarak
+  oluşturulur. Email yalnızca `email_verified=true` claim'i varsa saklanır.
+
+Sağlayıcı seçilip mobil login/kayıt akışı bağlanana kadar development ortamında OIDC
+değerleri boş bırakılabilir. Bu durumda public katalog çalışır; Bearer token gerektiren
+`/me` endpointleri kapalı kalır. Sağlayıcı hesabı ile yerel uygulama verisini birlikte
+silen hesap kapatma akışı, sağlayıcının yönetim API'si seçildikten sonra eklenecektir.
 
 ## CSV katalog importu
 
@@ -448,9 +513,19 @@ User ── SkinProfile
 | `API_RATE_LIMIT_TTL_MS` | `60000` | Rate limit zaman penceresi |
 | `API_RATE_LIMIT_LIMIT` | `100` | Pencere başına maksimum istek |
 | `ADMIN_API_KEY` | `local-development-...` | Geçici admin katalog anahtarı; en az 32 karakter |
+| `AUTH_ISSUER` | `https://identity.example.com/` | Access token içindeki güvenilir OIDC issuer |
+| `AUTH_AUDIENCE` | `cosmedia-api` | API için beklenen token audience değeri |
+| `AUTH_JWKS_URL` | `https://identity.example.com/.well-known/jwks.json` | İmza anahtarlarının güvenilir JWKS adresi |
+| `AUTH_ALLOWED_ALGORITHMS` | `RS256` | Virgülle ayrılmış izinli asimetrik imza algoritmaları |
 
 Eksik veya geçersiz environment değeri olduğunda API sessizce yanlış ayarla açılmaz;
 başlangıç sırasında anlaşılır bir hata vererek kapanır.
+
+Development ortamında OIDC değerleri boş bırakılabilir; public ve geçici admin
+endpointleri çalışmaya devam eder ancak `/me` endpointleri `AUTH_NOT_CONFIGURED`
+yanıtı verir. Üç OIDC değeri birlikte ayarlanmalıdır. Production ortamında bu
+değerler zorunludur ve `AUTH_JWKS_URL` HTTPS kullanmalıdır. Token imzası, issuer,
+audience, süre ve izinli algoritma doğrulanmadan hiçbir claim güvenilir kabul edilmez.
 
 ## Komutlar
 
@@ -514,8 +589,8 @@ CI şu kontrolleri yapar:
 3. İzole bir PostgreSQL 17 servisini hazırlar.
 4. Prisma Client üretir ve commit edilmiş migration'ları uygular.
 5. Unit testleri çalıştırır.
-6. Health, admin yetkilendirme, ortak hata formatı, CSV import/idempotency ve public
-   katalog görünürlüğünü gerçek HTTP istekleriyle test eder.
+6. Health, admin yetkilendirme, ortak hata formatı, CSV import/idempotency, kullanıcı
+   eşleme ve cilt profili akışlarını gerçek HTTP istekleriyle test eder.
 7. Production build alır.
 
 ## Ekip çalışma düzeni
@@ -572,9 +647,11 @@ Pull request açıklamasında şunlar bulunmalı:
 
 ### Aşama 2 — Kullanıcı ve profil
 
-- Managed auth sağlayıcısı entegrasyonu
+- [x] Sağlayıcıdan bağımsız OIDC/JWKS token doğrulama altyapısı
+- [x] Kullanıcı eşleme ve `/me` API'si
+- [x] Cilt tipi, endişeler, alerji ve kaçınılan içerik profili
+- Managed auth sağlayıcısının login/kayıt akışıyla bağlanması
 - Kullanıcı hesabı ve veri silme akışı
-- Cilt tipi, endişeler, alerji ve kaçınılan içerikler
 - Favoriler
 - Profil bazlı ürün filtreleme
 
