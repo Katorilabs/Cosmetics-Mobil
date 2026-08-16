@@ -3,6 +3,7 @@ import type { Prisma } from '../../generated/prisma/client.js';
 import { ProductStatus } from '../../generated/prisma/enums.js';
 import { slugify } from '../../common/slugify.js';
 import { PrismaService } from '../../database/prisma.service.js';
+import { IngredientNormalizationService } from '../ingredients/ingredient-normalization.service.js';
 import { CreateBrandDto } from './dto/create-brand.dto.js';
 import { CreateCategoryDto } from './dto/create-category.dto.js';
 import { CreateFormulaDto } from './dto/create-formula.dto.js';
@@ -11,7 +12,10 @@ import { UpdateProductDto } from './dto/update-product.dto.js';
 
 @Injectable()
 export class CatalogAdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ingredientNormalization: IngredientNormalizationService,
+  ) {}
 
   listBrands() {
     return this.prisma.brand.findMany({ orderBy: { name: 'asc' } });
@@ -169,25 +173,9 @@ export class CatalogAdminService {
       });
     }
 
-    const ingredients = await Promise.all(
-      input.ingredients.map(async (item) => {
-        const inciName = item.inciName.trim().toUpperCase();
-        return transaction.ingredient.upsert({
-          where: { inciName },
-          update: {
-            commonNames: item.commonNames,
-            functions: item.functions,
-            description: item.description?.trim(),
-          },
-          create: {
-            inciName,
-            slug: slugify(inciName),
-            commonNames: item.commonNames ?? [],
-            functions: item.functions ?? [],
-            description: item.description?.trim(),
-          },
-        });
-      }),
+    const ingredients = await this.ingredientNormalization.resolveOrCreateMany(
+      transaction,
+      input.ingredients,
     );
 
     return transaction.formulaVersion.create({
@@ -202,7 +190,9 @@ export class CatalogAdminService {
         ingredients: {
           create: ingredients.map((ingredient, position) => ({
             ingredientId: ingredient.id,
-            rawName: input.ingredients[position]?.rawName?.trim() ?? ingredient.inciName,
+            rawName: input.ingredients[position]?.rawName?.trim()
+              ?? input.ingredients[position]?.inciName.trim()
+              ?? ingredient.inciName,
             position: position + 1,
           })),
         },

@@ -37,6 +37,13 @@ enum EvidenceLevel {
   HIGH
 }
 
+enum EvidenceEffect {
+  INFORMATIONAL
+  BENEFICIAL
+  CAUTION
+  AVOID
+}
+
 enum ReviewStatus {
   PENDING
   PUBLISHED
@@ -57,6 +64,7 @@ model User {
   email          String?      @unique
   displayName    String?      @map("display_name")
   skinProfile    SkinProfile?
+  favorites      Favorite[]
   reviews        Review[]
   createdAt      DateTime     @default(now()) @map("created_at")
   updatedAt      DateTime     @updatedAt @map("updated_at")
@@ -91,29 +99,29 @@ model Brand {
 }
 
 model Category {
-  id        String     @id @default(uuid()) @db.Uuid
-  name      String     @unique
-  slug      String     @unique
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String    @unique
+  slug      String    @unique
   products  Product[]
-  createdAt DateTime   @default(now()) @map("created_at")
-  updatedAt DateTime   @updatedAt @map("updated_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
 
   @@map("categories")
 }
 
 model Product {
-  id          String        @id @default(uuid()) @db.Uuid
-  brandId     String        @map("brand_id") @db.Uuid
-  categoryId  String        @map("category_id") @db.Uuid
+  id          String           @id @default(uuid()) @db.Uuid
+  brandId     String           @map("brand_id") @db.Uuid
+  categoryId  String           @map("category_id") @db.Uuid
   name        String
-  slug        String        @unique
+  slug        String           @unique
   description String?
-  status      ProductStatus @default(DRAFT)
-  brand       Brand         @relation(fields: [brandId], references: [id], onDelete: Restrict)
-  category    Category      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  status      ProductStatus    @default(DRAFT)
+  brand       Brand            @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  category    Category         @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   variants    ProductVariant[]
-  createdAt   DateTime      @default(now()) @map("created_at")
-  updatedAt   DateTime      @updatedAt @map("updated_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
 
   @@index([brandId])
   @@index([categoryId, status])
@@ -132,6 +140,7 @@ model ProductVariant {
   product   Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
   images    ProductImage[]
   formulas  FormulaVersion[]
+  favorites Favorite[]
   reviews   Review[]
   scores    ScoreSnapshot[]
   createdAt DateTime         @default(now()) @map("created_at")
@@ -140,6 +149,20 @@ model ProductVariant {
   @@unique([productId, name])
   @@index([productId, isActive])
   @@map("product_variants")
+}
+
+model Favorite {
+  id        String         @id @default(uuid()) @db.Uuid
+  userId    String         @map("user_id") @db.Uuid
+  variantId String         @map("variant_id") @db.Uuid
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  createdAt DateTime       @default(now()) @map("created_at")
+
+  @@unique([userId, variantId])
+  @@index([userId, createdAt])
+  @@index([variantId])
+  @@map("favorites")
 }
 
 model ProductImage {
@@ -156,58 +179,77 @@ model ProductImage {
 }
 
 model Ingredient {
-  id           String               @id @default(uuid()) @db.Uuid
-  inciName     String               @unique @map("inci_name")
-  slug         String               @unique
-  commonNames  String[]             @map("common_names")
-  functions    String[]
-  description  String?
-  casNumber    String?              @map("cas_number")
-  ecNumber     String?              @map("ec_number")
-  evidence     IngredientEvidence[]
-  occurrences  ProductIngredient[]
-  createdAt    DateTime             @default(now()) @map("created_at")
-  updatedAt    DateTime             @updatedAt @map("updated_at")
+  id             String               @id @default(uuid()) @db.Uuid
+  inciName       String               @unique @map("inci_name")
+  normalizedName String               @unique @map("normalized_name")
+  slug           String               @unique
+  commonNames    String[]             @map("common_names")
+  functions      String[]
+  description    String?
+  casNumber      String?              @map("cas_number")
+  ecNumber       String?              @map("ec_number")
+  aliases        IngredientAlias[]
+  evidence       IngredientEvidence[]
+  occurrences    ProductIngredient[]
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
 
   @@index([inciName])
   @@map("ingredients")
 }
 
-model IngredientEvidence {
-  id           String        @id @default(uuid()) @db.Uuid
-  ingredientId String        @map("ingredient_id") @db.Uuid
-  title        String
-  summary      String
-  sourceUrl    String        @map("source_url")
-  sourceName   String        @map("source_name")
-  level        EvidenceLevel
-  skinTypes    SkinType[]    @map("skin_types")
-  concerns     SkinConcern[]
-  publishedAt  DateTime?     @map("published_at")
-  reviewedAt   DateTime?     @map("reviewed_at")
-  ingredient   Ingredient    @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
-  createdAt    DateTime      @default(now()) @map("created_at")
-  updatedAt    DateTime      @updatedAt @map("updated_at")
+model IngredientAlias {
+  id              String     @id @default(uuid()) @db.Uuid
+  ingredientId    String     @map("ingredient_id") @db.Uuid
+  alias           String
+  normalizedAlias String     @unique @map("normalized_alias")
+  sourceName      String?    @map("source_name")
+  reviewedAt      DateTime   @map("reviewed_at")
+  ingredient      Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
 
   @@index([ingredientId])
+  @@map("ingredient_aliases")
+}
+
+model IngredientEvidence {
+  id           String         @id @default(uuid()) @db.Uuid
+  ingredientId String         @map("ingredient_id") @db.Uuid
+  title        String
+  summary      String
+  sourceUrl    String         @map("source_url")
+  sourceName   String         @map("source_name")
+  level        EvidenceLevel
+  effect       EvidenceEffect @default(INFORMATIONAL)
+  skinTypes    SkinType[]     @map("skin_types")
+  concerns     SkinConcern[]
+  publishedAt  DateTime?      @map("published_at")
+  reviewedAt   DateTime?      @map("reviewed_at")
+  ingredient   Ingredient     @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  @@index([ingredientId])
+  @@index([effect, level])
   @@map("ingredient_evidence")
 }
 
 model FormulaVersion {
-  id           String              @id @default(uuid()) @db.Uuid
-  variantId    String              @map("variant_id") @db.Uuid
-  version      Int
-  rawInci      String              @map("raw_inci")
-  sourceUrl    String?             @map("source_url")
-  sourceName   String?             @map("source_name")
-  isActive     Boolean             @default(false) @map("is_active")
-  confidence   Decimal             @default(0) @db.Decimal(5, 4)
-  verifiedAt   DateTime?           @map("verified_at")
-  variant      ProductVariant      @relation(fields: [variantId], references: [id], onDelete: Cascade)
-  ingredients  ProductIngredient[]
-  scores       ScoreSnapshot[]
-  createdAt    DateTime            @default(now()) @map("created_at")
-  updatedAt    DateTime            @updatedAt @map("updated_at")
+  id          String              @id @default(uuid()) @db.Uuid
+  variantId   String              @map("variant_id") @db.Uuid
+  version     Int
+  rawInci     String              @map("raw_inci")
+  sourceUrl   String?             @map("source_url")
+  sourceName  String?             @map("source_name")
+  isActive    Boolean             @default(false) @map("is_active")
+  confidence  Decimal             @default(0) @db.Decimal(5, 4)
+  verifiedAt  DateTime?           @map("verified_at")
+  variant     ProductVariant      @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  ingredients ProductIngredient[]
+  scores      ScoreSnapshot[]
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
 
   @@unique([variantId, version])
   @@index([variantId, isActive])
@@ -215,14 +257,14 @@ model FormulaVersion {
 }
 
 model ProductIngredient {
-  id           String          @id @default(uuid()) @db.Uuid
-  formulaId    String          @map("formula_id") @db.Uuid
-  ingredientId String?         @map("ingredient_id") @db.Uuid
-  rawName      String          @map("raw_name")
+  id           String         @id @default(uuid()) @db.Uuid
+  formulaId    String         @map("formula_id") @db.Uuid
+  ingredientId String?        @map("ingredient_id") @db.Uuid
+  rawName      String         @map("raw_name")
   position     Int
-  isUncertain  Boolean         @default(false) @map("is_uncertain")
-  formula      FormulaVersion  @relation(fields: [formulaId], references: [id], onDelete: Cascade)
-  ingredient   Ingredient?     @relation(fields: [ingredientId], references: [id], onDelete: SetNull)
+  isUncertain  Boolean        @default(false) @map("is_uncertain")
+  formula      FormulaVersion @relation(fields: [formulaId], references: [id], onDelete: Cascade)
+  ingredient   Ingredient?    @relation(fields: [ingredientId], references: [id], onDelete: SetNull)
 
   @@unique([formulaId, position])
   @@index([ingredientId])
@@ -249,33 +291,33 @@ model Review {
 }
 
 model ScoreRule {
-  id          String        @id @default(uuid()) @db.Uuid
-  code        String        @unique
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique
   name        String
   description String
   version     Int
-  weight      Decimal       @db.Decimal(8, 4)
+  weight      Decimal  @db.Decimal(8, 4)
   conditions  Json
-  isActive    Boolean       @default(true) @map("is_active")
-  createdAt   DateTime      @default(now()) @map("created_at")
-  updatedAt   DateTime      @updatedAt @map("updated_at")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   @@index([isActive, version])
   @@map("score_rules")
 }
 
 model ScoreSnapshot {
-  id               String         @id @default(uuid()) @db.Uuid
-  variantId        String         @map("variant_id") @db.Uuid
-  formulaId        String         @map("formula_id") @db.Uuid
-  profileKey       String         @map("profile_key")
-  score            Decimal        @db.Decimal(5, 2)
-  confidence       Decimal        @db.Decimal(5, 4)
-  scoringVersion   Int            @map("scoring_version")
-  explanation      Json
-  variant          ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
-  formula          FormulaVersion @relation(fields: [formulaId], references: [id], onDelete: Cascade)
-  createdAt        DateTime       @default(now()) @map("created_at")
+  id             String         @id @default(uuid()) @db.Uuid
+  variantId      String         @map("variant_id") @db.Uuid
+  formulaId      String         @map("formula_id") @db.Uuid
+  profileKey     String         @map("profile_key")
+  score          Decimal        @db.Decimal(5, 2)
+  confidence     Decimal        @db.Decimal(5, 4)
+  scoringVersion Int            @map("scoring_version")
+  explanation    Json
+  variant        ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  formula        FormulaVersion @relation(fields: [formulaId], references: [id], onDelete: Cascade)
+  createdAt      DateTime       @default(now()) @map("created_at")
 
   @@unique([variantId, formulaId, profileKey, scoringVersion])
   @@index([variantId, profileKey])

@@ -30,6 +30,9 @@ Scraper worker (separate process, later)
 - `admin`: protected catalogue writes, formula versioning and product lifecycle.
 - `identity`: OIDC token validation, external subject mapping and current-user data.
 - `profiles`: authenticated skin profile and ingredient preferences.
+- `ingredients`: canonical name normalization and reviewed alias resolution.
+- `favorites`: authenticated, paginated product-variant bookmarks.
+- `matching`: profile-aware variant filtering and reviewed evidence explanations.
 - Future `reviews`: profile snapshots, moderation and aggregate experience metrics.
 - Future `scoring`: versioned, explainable formula/profile score calculation.
 - Future `moderation`: approval workflow for imported and scraped data.
@@ -45,8 +48,19 @@ internal files; shared behavior must be exposed by the owning module.
 - A product has variants; a variant has versioned formulas. Formula history is not
   overwritten when a brand changes its INCI list.
 - Each formula entry retains the raw ingredient name even when normalization fails.
+- Ingredients have a conservative unique normalization key. Reviewed aliases resolve
+  source names and profile preferences to one canonical ingredient without rewriting
+  the raw formula entry.
+- Alias uniqueness is checked against both canonical names and other aliases at the
+  application boundary. Removing an alias does not remove its canonical ingredient or
+  existing formula links.
+- Ingredient evidence has an explicit direction. The default `INFORMATIONAL` value
+  cannot generate a profile signal; only reviewed, directed evidence participates
+  in matching.
 - Reviews store a profile snapshot so historical aggregates do not change when a
   user edits their current profile.
+- Favorites reference product variants, are unique per user/variant pair and are
+  removed through database cascades with either owning record.
 - Scores are snapshots tied to a formula and scoring version. Explanations and
   confidence are stored with the number shown to a user.
 - Scraped data never becomes public automatically. It enters a review workflow.
@@ -80,6 +94,11 @@ internal files; shared behavior must be exposed by the owning module.
 - URLs and scraped payloads must be validated before the worker fetches or stores
   them. Private-network destinations must be rejected to prevent SSRF.
 - User-generated reviews require output encoding, moderation and abuse reporting.
+- Profile matching treats explicit `avoidInci` entries as hard user preferences.
+  Reviewed aliases canonicalize those preferences. Free-text allergies are not
+  inferred as INCI names without an explicit user choice.
+- Matching never infers concentration from INCI order and returns evidence sources,
+  matched profile fields and a non-medical-advice disclaimer with every page.
 - CSV catalogue imports are limited to 1 MB/1,000 rows, fully validated before
   writes, and applied in one transaction. Re-imports update stable product and
   variant keys without duplicating unchanged formula versions.
@@ -93,12 +112,12 @@ future job boundary.
 
 ## Verification strategy
 
-- Unit tests validate isolated guards, profile normalization, catalogue services,
-  CSV parsing and the shared HTTP error contract.
+- Unit tests validate isolated guards, ingredient/alias normalization, profile
+  normalization, catalogue services, CSV parsing and the shared HTTP error contract.
 - E2E tests boot the NestJS application with the same production bootstrap
   configuration and send real HTTP requests through Supertest.
 - E2E tests use PostgreSQL, apply committed migrations, verify catalogue import
-  idempotency plus authenticated user/profile flows, and remove only namespaced
-  fixture records afterward.
+  idempotency, alias resolution/removal and authenticated user/profile/favorite/matching
+  flows, then remove only namespaced fixture records afterward.
 - GitHub Actions provisions a clean PostgreSQL 17 service for every pull request
   and `main` push before running unit tests, E2E tests and the production build.

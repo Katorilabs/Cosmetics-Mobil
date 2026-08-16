@@ -5,8 +5,10 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { configuration, validateEnvironment } from './config/configuration.js';
 import { DatabaseModule } from './database/database.module.js';
 import { AdminModule } from './modules/admin/admin.module.js';
+import { FavoritesModule } from './modules/favorites/favorites.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { IdentityModule } from './modules/identity/identity.module.js';
+import { MatchingModule } from './modules/matching/matching.module.js';
 import { ProductsModule } from './modules/products/products.module.js';
 import { ProfilesModule } from './modules/profiles/profiles.module.js';
 
@@ -30,8 +32,10 @@ import { ProfilesModule } from './modules/profiles/profiles.module.js';
     }),
     DatabaseModule,
     AdminModule,
+    FavoritesModule,
     HealthModule,
     IdentityModule,
+    MatchingModule,
     ProductsModule,
     ProfilesModule,
   ],

@@ -3,13 +3,18 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBody, ApiConsumes, ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { IngredientAliasesService } from '../ingredients/ingredient-aliases.service.js';
+import { CreateIngredientAliasDto } from '../ingredients/dto/create-ingredient-alias.dto.js';
+import { ListIngredientsQuery } from '../ingredients/dto/list-ingredients.query.js';
 import { AdminKeyGuard } from './admin-key.guard.js';
 import { CatalogAdminService } from './catalog-admin.service.js';
 import { CatalogCsvImportService } from './catalog-csv-import.service.js';
@@ -27,6 +32,7 @@ export class CatalogAdminController {
   constructor(
     private readonly catalog: CatalogAdminService,
     private readonly csvImport: CatalogCsvImportService,
+    private readonly ingredientAliases: IngredientAliasesService,
   ) {}
 
   @Get('brands')
@@ -51,6 +57,28 @@ export class CatalogAdminController {
   @ApiOperation({ summary: 'Create a catalogue category' })
   createCategory(@Body() input: CreateCategoryDto) {
     return this.catalog.createCategory(input);
+  }
+
+  @Get('ingredients')
+  @ApiOperation({ summary: 'List canonical ingredients with their reviewed aliases' })
+  listIngredients(@Query() query: ListIngredientsQuery) {
+    return this.ingredientAliases.list(query);
+  }
+
+  @Post('ingredients/:ingredientId/aliases')
+  @ApiOperation({ summary: 'Create a reviewed alias for a canonical ingredient' })
+  createIngredientAlias(
+    @Param('ingredientId', ParseUUIDPipe) ingredientId: string,
+    @Body() input: CreateIngredientAliasDto,
+  ) {
+    return this.ingredientAliases.create(ingredientId, input);
+  }
+
+  @Delete('ingredient-aliases/:aliasId')
+  @HttpCode(204)
+  @ApiOperation({ summary: 'Remove an ingredient alias' })
+  async removeIngredientAlias(@Param('aliasId', ParseUUIDPipe) aliasId: string): Promise<void> {
+    await this.ingredientAliases.remove(aliasId);
   }
 
   @Post('products')

@@ -2,6 +2,7 @@ import { ConflictException } from '@nestjs/common';
 import { jest } from '@jest/globals';
 import { ProductStatus } from '../../generated/prisma/enums.js';
 import type { PrismaService } from '../../database/prisma.service.js';
+import type { IngredientNormalizationService } from '../ingredients/ingredient-normalization.service.js';
 import { CatalogAdminService } from './catalog-admin.service.js';
 
 describe('CatalogAdminService', () => {
@@ -14,7 +15,10 @@ describe('CatalogAdminService', () => {
       updateMany: jest.fn(),
     },
   };
-  const service = new CatalogAdminService(prisma as unknown as PrismaService);
+  const service = new CatalogAdminService(
+    prisma as unknown as PrismaService,
+    {} as IngredientNormalizationService,
+  );
 
   beforeEach(() => {
     jest.clearAllMocks();

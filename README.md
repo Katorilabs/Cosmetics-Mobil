@@ -17,6 +17,8 @@ admin paneli ve scraper worker sonraki aşamalarda aynı monorepo içine eklenec
 - [Projeyi çalıştırma](#projeyi-çalıştırma)
 - [API endpointleri](#api-endpointleri)
 - [Kimlik doğrulama kurulumu](#kimlik-doğrulama-kurulumu)
+- [Profil bazlı ürün eşleştirme](#profil-bazlı-ürün-eşleştirme)
+- [INCI alias ve normalizasyon](#inci-alias-ve-normalizasyon)
 - [CSV katalog importu](#csv-katalog-importu)
 - [API hata formatı](#api-hata-formatı)
 - [Veri modeli](#veri-modeli)
@@ -60,7 +62,7 @@ kural sürümü ve güven seviyesi kullanıcıya açıklanacaktır.
 - PostgreSQL ve Prisma veri katmanı
 - İlk veritabanı migration'ı
 - Ürün listeleme ve ürün detay okuma modülü
-- Tekrar çalıştırılabilir demo katalog seed'i (2 ürün, 7 INCI kaydı)
+- Tekrar çalıştırılabilir demo seed (2 ürün, 7 INCI, 4 moderasyonlu alias, 1 evidence)
 - Admin marka/kategori oluşturma ve listeleme endpointleri
 - Transactional ürün + varyant + ilk formül oluşturma
 - Ürün güncelleme, arşivleme ve yeni formül versiyonu ekleme
@@ -71,6 +73,9 @@ kural sürümü ve güven seviyesi kullanıcıya açıklanacaktır.
 - OIDC/JWKS tabanlı, sağlayıcıdan bağımsız Bearer token doğrulaması
 - İlk doğrulanmış istekte idempotent uygulama kullanıcısı oluşturma/eşleme
 - Cilt tipi, endişeler, alerjiler ve kaçınılan INCI profil endpointleri
+- Yayınlanmış ürün varyantları için idempotent ve sayfalı favori endpointleri
+- Kaçınılan INCI ve moderasyonlu kanıtlara dayalı açıklanabilir profil eşleştirme
+- Kanonik INCI adı, normalize anahtar ve moderasyonlu alias çözümleme altyapısı
 - API/veritabanı health kontrolü
 - Swagger/OpenAPI dokümantasyonu
 - DTO doğrulama ve bilinmeyen alanları reddetme
@@ -89,7 +94,7 @@ Henüz hazır olmayan ana parçalar:
 - Mobil Expo uygulaması
 - Scraper worker ve moderasyon ekranı
 - Skor hesaplama motoru
-- Yorum/favori endpointleri
+- Yorum endpointleri
 - Üretim deployment altyapısı
 
 ## Teknoloji yığını
@@ -124,8 +129,11 @@ cosmedia/
 │       │   ├── database/         # Prisma bağlantısı
 │       │   ├── generated/        # Prisma Client; Git'e eklenmez
 │       │   └── modules/
+│       │       ├── favorites/
 │       │       ├── health/
 │       │       ├── identity/
+│       │       ├── ingredients/
+│       │       ├── matching/
 │       │       ├── profiles/
 │       │       └── products/
 │       ├── jest.config.cjs
@@ -231,8 +239,9 @@ npm run db:seed
 ```
 
 `db:deploy`, repository'de bulunan migration'ları uygular. İlk kurulumda yeniden
-`init` migration'ı oluşturmayın. `db:seed` iki yayınlanmış demo ürün ve bunların
-normalize INCI kayıtlarını oluşturur; komut tekrar çalıştırıldığında duplicate üretmez.
+`init` migration'ı oluşturmayın. `db:seed` iki yayınlanmış demo ürün, bunların normalize
+INCI kayıtları, dört moderasyonlu alias ve bir evidence örneği oluşturur; komut tekrar
+çalıştırıldığında duplicate üretmez.
 
 ## Projeyi çalıştırma
 
@@ -292,10 +301,15 @@ Kullanıcı endpointleri `Authorization: Bearer <access-token>` header'ı gerekt
 | GET | `/api/v1/me/skin-profile` | Mevcut cilt profilini getirir |
 | PUT | `/api/v1/me/skin-profile` | Cilt profilini oluşturur veya tamamen günceller |
 | DELETE | `/api/v1/me/skin-profile` | Cilt profilini idempotent olarak siler |
+| GET | `/api/v1/me/favorites` | Favorileri `page` ve `limit` ile sayfalı listeler |
+| PUT | `/api/v1/me/favorites/:variantId` | Yayınlanmış aktif varyantı idempotent favoriler |
+| DELETE | `/api/v1/me/favorites/:variantId` | Favoriyi idempotent kaldırır |
+| GET | `/api/v1/me/product-matches` | Cilt profiline göre açıklanabilir varyant eşleşmelerini listeler |
 
 `PUT /me/skin-profile`; `DRY`, `OILY`, `COMBINATION`, `NORMAL`, `SENSITIVE` cilt
-tiplerini ve şemada tanımlı endişeleri kabul eder. Kaçınılan INCI adları trim edilir,
-boşlukları normalize edilir ve büyük harfe çevrilir. Bilinmeyen alanlar reddedilir.
+tiplerini ve şemada tanımlı endişeleri kabul eder. Kaçınılan INCI adları normalize
+edilir; moderasyonlu bir alias ile eşleşiyorsa kanonik INCI adına çevrilir. Bilinmeyen
+adlar normalize edilmiş halleriyle korunur. Bilinmeyen request alanları reddedilir.
 
 Örnek:
 
@@ -320,6 +334,9 @@ Admin katalog endpointleri `x-admin-key` header'ı gerektirir:
 | POST | `/api/v1/admin/catalog/brands` | Marka oluşturur |
 | GET | `/api/v1/admin/catalog/categories` | Kategorileri listeler |
 | POST | `/api/v1/admin/catalog/categories` | Kategori oluşturur |
+| GET | `/api/v1/admin/catalog/ingredients` | Kanonik içerikleri alias'larıyla sayfalı listeler |
+| POST | `/api/v1/admin/catalog/ingredients/:ingredientId/aliases` | Moderasyonlu alias ekler |
+| DELETE | `/api/v1/admin/catalog/ingredient-aliases/:aliasId` | Alias kaydını siler |
 | POST | `/api/v1/admin/catalog/products` | Ürün, ilk varyant ve ilk formülü transaction içinde oluşturur |
 | POST | `/api/v1/admin/catalog/imports/products` | `text/csv` katalog dosyasını atomik olarak import eder |
 | PATCH | `/api/v1/admin/catalog/products/:id` | Ürün bilgilerini veya yayın durumunu günceller |
@@ -383,6 +400,75 @@ değerleri boş bırakılabilir. Bu durumda public katalog çalışır; Bearer t
 `/me` endpointleri kapalı kalır. Sağlayıcı hesabı ile yerel uygulama verisini birlikte
 silen hesap kapatma akışı, sağlayıcının yönetim API'si seçildikten sonra eklenecektir.
 
+## Profil bazlı ürün eşleştirme
+
+`GET /api/v1/me/product-matches`, kullanıcının cilt profilini yayınlanmış ve aktif
+formüllerle varyant seviyesinde kesiştirir.
+
+| Parametre | Varsayılan | Açıklama |
+| --- | --- | --- |
+| `search` | — | Ürün veya marka adında arama |
+| `categoryId` | — | UUID ile kategori filtresi |
+| `brandId` | — | UUID ile marka filtresi |
+| `excludeAvoided` | `true` | Açık kaçınma/`AVOID` sinyalli formülleri sonuçtan çıkarır |
+| `page` | `1` | Sayfa numarası |
+| `limit` | `20` | Sayfa boyutu; en fazla 100 |
+
+Eşleştirme kuralları:
+
+- Profildeki `avoidInci` adları aktif formülün normalize INCI listesiyle kesin olarak
+  karşılaştırılır.
+- Yalnızca `reviewedAt` değeri bulunan ve yönü açıkça `BENEFICIAL`, `CAUTION` veya
+  `AVOID` olarak işaretlenmiş kanıtlar sinyal üretir.
+- Kanıtın cilt tipi veya endişelerinden en az biri kullanıcı profiliyle eşleşmelidir.
+- Sonuç durumu `RELEVANT`, `CAUTION`, `AVOID` veya `NEUTRAL` olur; her sinyal içerik
+  adı, kanıt seviyesi, eşleşen profil alanları, özet ve kaynak URL'siyle açıklanır.
+- Serbest metin `allergies` alanı otomatik INCI eşleştirmesine sokulmaz. Alerjiler
+  için doğrulanmış alias sözlüğü eklenene kadar ilgili adlar `avoidInci` listesine de
+  eklenmelidir.
+
+Bu endpoint ürün etkinliği veya tıbbi güvenlik puanı vermez. INCI listesi içerik
+konsantrasyonunu göstermediğinden response içindeki `guidance` alanı
+`formulaConcentrationKnown=false` ve `medicalAdvice=false` bilgisini taşır.
+`excludeAvoided=false` kullanıldığında kaçınılan varyantlar gizlenmez; `AVOID`
+gerekçeleriyle birlikte gösterilir.
+
+Demo seed, niasinamid için acne profiline ilişkin moderasyonlu bir örnek kanıt kaydı
+oluşturur. Kaynak: [PubMed PMID 7657446](https://pubmed.ncbi.nlm.nih.gov/7657446/).
+Seed özeti herhangi bir üründe aynı konsantrasyon veya klinik etki varsaymaz.
+
+## INCI alias ve normalizasyon
+
+Her `Ingredient` kaydı bir kanonik `inciName` ve benzersiz `normalizedName` anahtarı
+taşır. Normalizasyon Unicode uyumluluk dönüşümü uygular, farklı tire karakterlerini
+birleştirir, gereksiz boşlukları kaldırır ve karşılaştırma anahtarını büyük harfe
+çevirir. Noktalama işaretleri agresif biçimde silinmez; böylece benzer görünen farklı
+kimyasal adların yanlışlıkla birleşme riski azaltılır.
+
+`IngredientAlias`, kullanıcı veya veri kaynağında görülebilen adı tek bir kanonik
+içeriğe bağlar. Geçici admin anahtarıyla eklenen alias moderasyonlu kabul edilir ve
+`reviewedAt` zamanı kaydedilir. Bir alias:
+
+- başka bir kanonik ad veya alias ile aynı normalize anahtarı kullanamaz,
+- formül importu ve admin formül oluşturma sırasında kanonik içeriğe çözülür,
+- cilt profilindeki `avoidInci` tercihlerini de kanonik ada dönüştürür,
+- silindiğinde daha önce kurulmuş formül–içerik bağlantılarını bozmaz.
+
+Formülde kaynaktan gelen ad `ProductIngredient.rawName` alanında aynen korunur;
+eşleştirme ve ilerideki skor motoru kanonik `Ingredient` kaydını kullanır. Alias
+sözlüğünde bulunmayan kontrollü admin/CSV girdisi yeni bir kanonik içerik oluşturur.
+Bu nedenle scraper çıktısı gelecekte otomatik yayınlanmadan önce moderasyona girecektir.
+
+Örnek alias oluşturma:
+
+```bash
+curl -X POST \
+  -H "x-admin-key: local-development-admin-key-change-me" \
+  -H "content-type: application/json" \
+  -d '{"alias":"Vitamin B3","sourceName":"Manual review"}' \
+  "http://localhost:3000/api/v1/admin/catalog/ingredients/<ingredient-uuid>/aliases"
+```
+
 ## CSV katalog importu
 
 Örnek dosya:
@@ -414,7 +500,7 @@ CSV kolonları:
 | `barcode` | Hayır | 8–14 rakam |
 | `image_url` | Hayır | Protokollü görsel URL'si |
 | `raw_inci` | Hayır | Etiketteki ham INCI metni; virgül içeriyorsa CSV'de tırnaklanmalı |
-| `inci_names` | Evet | `AQUA\|GLYCERIN\|NIACINAMIDE` biçiminde normalize adlar |
+| `inci_names` | Evet | `AQUA\|GLYCERIN\|Vitamin B3` biçiminde INCI/alias adları |
 | `source_name` | Hayır | Verinin kaynağı |
 | `source_url` | Hayır | Protokollü kaynak URL'si |
 | `confidence` | Hayır | `0` ile `1` arasında güven seviyesi |
@@ -482,11 +568,13 @@ Brand ──< Product >── Category
         |     |     +──< Review
         |     +────────< ProductImage
         v
-   FormulaVersion ──< ProductIngredient >── Ingredient
+   FormulaVersion ──< ProductIngredient >── Ingredient ──< IngredientAlias
         |                                      |
         +──< ScoreSnapshot                     +──< IngredientEvidence
 
 User ── SkinProfile
+  |
+  +──< Favorite >── ProductVariant
   |
   +──< Review (profileSnapshot ile)
 ```
@@ -496,7 +584,13 @@ User ── SkinProfile
 - Ürün ve ürün varyantı ayrıdır; aynı ürünün farklı hacim/barkodları olabilir.
 - INCI listesi doğrudan ürün üstüne yazılmaz, `FormulaVersion` ile versiyonlanır.
 - Normalize edilemeyen içeriklerde ham isim kaybedilmez.
+- Kanonik içerik ve alias anahtarları benzersizdir; alias eşleşmesi formülün ham adını
+  değiştirmeden tüm analizleri tek bir `Ingredient` kaydı üzerinde toplar.
 - Yorum, kullanıcının o andaki cilt profilini snapshot olarak saklar.
+- Favori bir ürüne değil belirli ürün varyantına bağlıdır; kullanıcı/varyant başına
+  tek kayıt vardır ve ilişkili kayıt silindiğinde cascade ile temizlenir.
+- Ingredient evidence yönü bilinmiyorsa `INFORMATIONAL` kalır ve profil sinyali
+  üretmez; yalnızca moderasyonlu/yönlendirilmiş kanıt eşleştirmeye katılır.
 - Skor, formül ve scoring sürümüne bağlı snapshot olarak tutulur.
 - Scraper verisi otomatik yayınlanmaz; moderasyon akışına girecek şekilde modellenir.
 
@@ -574,8 +668,9 @@ git diff --check
 ```
 
 `npm run test:e2e` için Docker PostgreSQL servisi çalışıyor ve migration'lar uygulanmış
-olmalıdır. Test paketi yalnızca `e2e-` önekli kendi katalog verisini oluşturur ve test
-sonunda temizler; seed veya geliştirici verilerine dokunmaz.
+olmalıdır. Test paketi yalnızca `e2e-` önekli kendi katalog, kullanıcı, profil ve
+favori/evidence verisini oluşturur; test sonunda bunları temizler ve seed/geliştirici
+verilerine dokunmaz.
 
 GitHub Actions şu durumlarda otomatik çalışır:
 
@@ -590,7 +685,8 @@ CI şu kontrolleri yapar:
 4. Prisma Client üretir ve commit edilmiş migration'ları uygular.
 5. Unit testleri çalıştırır.
 6. Health, admin yetkilendirme, ortak hata formatı, CSV import/idempotency, kullanıcı
-   eşleme ve cilt profili akışlarını gerçek HTTP istekleriyle test eder.
+   eşleme, cilt profili, favori ve açıklanabilir ürün eşleştirme akışlarını gerçek HTTP
+   istekleriyle test eder.
 7. Production build alır.
 
 ## Ekip çalışma düzeni
@@ -650,14 +746,15 @@ Pull request açıklamasında şunlar bulunmalı:
 - [x] Sağlayıcıdan bağımsız OIDC/JWKS token doğrulama altyapısı
 - [x] Kullanıcı eşleme ve `/me` API'si
 - [x] Cilt tipi, endişeler, alerji ve kaçınılan içerik profili
+- [x] Ürün varyantı favorileri
 - Managed auth sağlayıcısının login/kayıt akışıyla bağlanması
 - Kullanıcı hesabı ve veri silme akışı
-- Favoriler
-- Profil bazlı ürün filtreleme
+- [x] Profil bazlı varyant filtreleme ve açıklanabilir evidence sinyalleri
 
 ### Aşama 3 — İçerik ve skor motoru
 
-- INCI alias/normalizasyon sistemi
+- [x] INCI alias/normalizasyon sistemi
+- [x] Evidence yönü (`INFORMATIONAL/BENEFICIAL/CAUTION/AVOID`) temeli
 - Kaynak ve bilimsel kanıt yönetimi
 - Versiyonlanmış skor kuralları
 - Skor açıklaması ve güven seviyesi

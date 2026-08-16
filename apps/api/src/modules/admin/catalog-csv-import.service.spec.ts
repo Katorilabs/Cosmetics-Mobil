@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import type { PrismaService } from '../../database/prisma.service.js';
 import { ProductStatus } from '../../generated/prisma/enums.js';
 import { CatalogCsvImportService } from './catalog-csv-import.service.js';
+import type { IngredientNormalizationService } from '../ingredients/ingredient-normalization.service.js';
 
 const header = [
   'brand',
@@ -23,7 +24,10 @@ const header = [
 ].join(',');
 
 describe('CatalogCsvImportService', () => {
-  const service = new CatalogCsvImportService({} as PrismaService);
+  const service = new CatalogCsvImportService(
+    {} as PrismaService,
+    {} as IngredientNormalizationService,
+  );
 
   it('parses BOM, quoted commas and pipe-separated INCI names', () => {
     const csv = `\uFEFF${header}\nCosmedia Demo Lab,https://example.com,Serum,Demo Serum,Demo row,PUBLISHED,30 ml,30.00,ml,8690000000020,,"AQUA, GLYCERIN",AQUA|GLYCERIN,Demo,https://example.com/demo,0.9`;

@@ -20,6 +20,7 @@ const csvContent = [
 describe('Catalog API (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  let ingredientAliasId: string;
 
   async function cleanFixtureData(): Promise<void> {
     await prisma.product.deleteMany({ where: { slug: PRODUCT_SLUG } });
@@ -136,5 +137,82 @@ describe('Catalog API (e2e)', () => {
       slug: PRODUCT_SLUG,
       name: 'E2E CSV Product',
     });
+  });
+
+  it('creates and searches a reviewed ingredient alias', async () => {
+    const ingredient = await prisma.ingredient.findUniqueOrThrow({
+      where: { normalizedName: 'E2E NIACINAMIDE' },
+    });
+    const createResponse = await request(app.getHttpServer())
+      .post(`/api/v1/admin/catalog/ingredients/${ingredient.id}/aliases`)
+      .set('x-admin-key', ADMIN_API_KEY)
+      .send({ alias: 'E2E Vitamin B3', sourceName: 'E2E manual review' })
+      .expect(201);
+
+    ingredientAliasId = createResponse.body.id;
+    expect(createResponse.body).toMatchObject({
+      ingredientId: ingredient.id,
+      alias: 'E2E Vitamin B3',
+      normalizedAlias: 'E2E VITAMIN B3',
+      sourceName: 'E2E manual review',
+    });
+
+    const listResponse = await request(app.getHttpServer())
+      .get('/api/v1/admin/catalog/ingredients')
+      .set('x-admin-key', ADMIN_API_KEY)
+      .query({ search: 'vitamin b3' })
+      .expect(200);
+
+    expect(listResponse.body.meta.total).toBeGreaterThanOrEqual(1);
+    const matchedIngredient = listResponse.body.data.find(
+      (item: { inciName: string }) => item.inciName === 'E2E NIACINAMIDE',
+    );
+    expect(matchedIngredient).toMatchObject({
+      inciName: 'E2E NIACINAMIDE',
+      aliases: [{ id: ingredientAliasId, normalizedAlias: 'E2E VITAMIN B3' }],
+    });
+  });
+
+  it('resolves an alias while preserving the source formula name', async () => {
+    const variant = await prisma.productVariant.findFirstOrThrow({
+      where: { product: { slug: PRODUCT_SLUG } },
+    });
+    const response = await request(app.getHttpServer())
+      .post(`/api/v1/admin/catalog/variants/${variant.id}/formulas`)
+      .set('x-admin-key', ADMIN_API_KEY)
+      .send({
+        rawInci: 'E2E Aqua, E2E Vitamin B3',
+        sourceName: 'E2E alias formula',
+        confidence: 1,
+        isActive: true,
+        ingredients: [
+          { inciName: 'E2E AQUA' },
+          { inciName: 'e2e vitamin b3' },
+        ],
+      })
+      .expect(201);
+
+    expect(response.body.ingredients).toEqual([
+      expect.objectContaining({
+        rawName: 'E2E AQUA',
+        ingredient: expect.objectContaining({ inciName: 'E2E AQUA' }),
+      }),
+      expect.objectContaining({
+        rawName: 'e2e vitamin b3',
+        ingredient: expect.objectContaining({ inciName: 'E2E NIACINAMIDE' }),
+      }),
+    ]);
+  });
+
+  it('removes an ingredient alias without changing formula links', async () => {
+    await request(app.getHttpServer())
+      .delete(`/api/v1/admin/catalog/ingredient-aliases/${ingredientAliasId}`)
+      .set('x-admin-key', ADMIN_API_KEY)
+      .expect(204);
+
+    await expect(prisma.ingredientAlias.count({ where: { id: ingredientAliasId } })).resolves.toBe(0);
+    await expect(prisma.productIngredient.count({
+      where: { ingredient: { normalizedName: 'E2E NIACINAMIDE' } },
+    })).resolves.toBeGreaterThan(0);
   });
 });

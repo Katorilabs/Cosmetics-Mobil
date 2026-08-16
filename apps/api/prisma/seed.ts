@@ -2,7 +2,13 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.js';
-import { ProductStatus } from '../src/generated/prisma/enums.js';
+import {
+  EvidenceEffect,
+  EvidenceLevel,
+  ProductStatus,
+  SkinConcern,
+  SkinType,
+} from '../src/generated/prisma/enums.js';
 
 const rootEnvironmentFile = fileURLToPath(new URL('../../../.env', import.meta.url));
 
@@ -82,6 +88,13 @@ const products = [
   },
 ];
 
+const ingredientAliases = [
+  { inciName: 'AQUA', alias: 'Water' },
+  { inciName: 'NIACINAMIDE', alias: 'Vitamin B3' },
+  { inciName: 'NIACINAMIDE', alias: 'Niasinamid' },
+  { inciName: 'PANTHENOL', alias: 'Provitamin B5' },
+];
+
 async function seed(): Promise<void> {
   const brand = await prisma.brand.upsert({
     where: { slug: 'cosmedia-demo-lab' },
@@ -104,10 +117,11 @@ async function seed(): Promise<void> {
   const ingredientRecords = await Promise.all(
     ingredients.map((ingredient) =>
       prisma.ingredient.upsert({
-        where: { inciName: ingredient.inciName },
-        update: ingredient,
+        where: { normalizedName: ingredient.inciName },
+        update: { ...ingredient, normalizedName: ingredient.inciName },
         create: {
           ...ingredient,
+          normalizedName: ingredient.inciName,
           slug: ingredient.inciName.toLocaleLowerCase('en-US').replace(/[^a-z0-9]+/g, '-'),
         },
       }),
@@ -116,6 +130,67 @@ async function seed(): Promise<void> {
   const ingredientByName = new Map(
     ingredientRecords.map((ingredient) => [ingredient.inciName, ingredient]),
   );
+  const niacinamide = ingredientByName.get('NIACINAMIDE');
+
+  if (!niacinamide) {
+    throw new Error('NIACINAMIDE seed ingredient is missing');
+  }
+
+  for (const item of ingredientAliases) {
+    const ingredient = ingredientByName.get(item.inciName);
+
+    if (!ingredient) {
+      throw new Error(`Seed alias ingredient is missing: ${item.inciName}`);
+    }
+
+    const normalizedAlias = item.alias.trim().replace(/\s+/g, ' ').toLocaleUpperCase('en-US');
+    await prisma.ingredientAlias.upsert({
+      where: { normalizedAlias },
+      update: {
+        ingredientId: ingredient.id,
+        alias: item.alias,
+        sourceName: 'Cosmedia demo manual review',
+        reviewedAt: new Date('2026-08-16T00:00:00.000Z'),
+      },
+      create: {
+        ingredientId: ingredient.id,
+        alias: item.alias,
+        normalizedAlias,
+        sourceName: 'Cosmedia demo manual review',
+        reviewedAt: new Date('2026-08-16T00:00:00.000Z'),
+      },
+    });
+  }
+
+  const niacinamideEvidenceKey = {
+    ingredientId: niacinamide.id,
+    sourceUrl: 'https://pubmed.ncbi.nlm.nih.gov/7657446/',
+    title: 'Topical nicotinamide compared with clindamycin gel in inflammatory acne',
+  };
+  const existingNiacinamideEvidence = await prisma.ingredientEvidence.findFirst({
+    where: niacinamideEvidenceKey,
+    select: { id: true },
+  });
+  const niacinamideEvidence = {
+    ...niacinamideEvidenceKey,
+    summary: 'Bu çalışma %4 topikal nikotinamid jeli incelemiştir. Bir üründe yalnızca INCI adının bulunması aynı konsantrasyon veya klinik etkiyi garanti etmez.',
+    sourceName: 'PubMed / International Journal of Dermatology',
+    level: EvidenceLevel.MODERATE,
+    effect: EvidenceEffect.BENEFICIAL,
+    skinTypes: [SkinType.OILY, SkinType.COMBINATION],
+    concerns: [SkinConcern.ACNE],
+    publishedAt: new Date('1995-06-01T00:00:00.000Z'),
+    reviewedAt: new Date('2026-08-16T00:00:00.000Z'),
+  };
+
+  if (existingNiacinamideEvidence) {
+    await prisma.ingredientEvidence.update({
+      where: { id: existingNiacinamideEvidence.id },
+      data: niacinamideEvidence,
+    });
+  } else {
+    await prisma.ingredientEvidence.create({ data: niacinamideEvidence });
+  }
 
   for (const item of products) {
     const category = categoryBySlug.get(item.categorySlug);
@@ -193,7 +268,9 @@ async function seed(): Promise<void> {
     });
   }
 
-  console.log(`Seed complete: ${products.length} products, ${ingredients.length} ingredients`);
+  console.log(
+    `Seed complete: ${products.length} products, ${ingredients.length} ingredients, ${ingredientAliases.length} reviewed aliases, 1 reviewed evidence record`,
+  );
 }
 
 try {

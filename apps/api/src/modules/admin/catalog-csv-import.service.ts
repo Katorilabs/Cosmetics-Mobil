@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { slugify } from '../../common/slugify.js';
 import { PrismaService } from '../../database/prisma.service.js';
 import { ProductStatus } from '../../generated/prisma/enums.js';
+import { IngredientNormalizationService } from '../ingredients/ingredient-normalization.service.js';
 
 const MAX_FILE_BYTES = 1_000_000;
 const MAX_ROWS = 1_000;
@@ -77,7 +78,7 @@ const csvRowSchema = z.object({
     .trim()
     .min(2)
     .max(20_000)
-    .transform((value) => value.split('|').map((item) => item.trim().toUpperCase()).filter(Boolean))
+    .transform((value) => value.split('|').map((item) => item.trim()).filter(Boolean))
     .refine((items) => items.length > 0 && items.length <= 200, {
       message: 'Must contain between 1 and 200 pipe-separated INCI names',
     }),
@@ -105,7 +106,10 @@ export type CsvImportResult = {
 
 @Injectable()
 export class CatalogCsvImportService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ingredientNormalization: IngredientNormalizationService,
+  ) {}
 
   async importProducts(csvContent: string): Promise<CsvImportResult> {
     const rows = this.parseAndValidate(csvContent);
@@ -200,6 +204,11 @@ export class CatalogCsvImportService {
           }
 
           const rawInci = row.raw_inci ?? row.inci_names.join(', ');
+          const ingredients = await this.ingredientNormalization.resolveOrCreateMany(
+            transaction,
+            row.inci_names.map((inciName) => ({ inciName })),
+          );
+          const normalizedInciNames = ingredients.map((ingredient) => ingredient.inciName);
           const latestFormula = await transaction.formulaVersion.findFirst({
             where: { variantId: variant.id },
             orderBy: { version: 'desc' },
@@ -215,8 +224,8 @@ export class CatalogCsvImportService {
           const latestInciNames = latestFormula?.ingredients
             .map((item) => item.ingredient?.inciName)
             .filter((item): item is string => Boolean(item)) ?? [];
-          const hasSameNormalizedInci = latestInciNames.length === row.inci_names.length
-            && latestInciNames.every((inciName, index) => inciName === row.inci_names[index]);
+          const hasSameNormalizedInci = latestInciNames.length === normalizedInciNames.length
+            && latestInciNames.every((inciName, index) => inciName === normalizedInciNames[index]);
 
           if (latestFormula?.rawInci === rawInci && hasSameNormalizedInci) {
             result.formulasUnchanged += 1;
@@ -227,21 +236,6 @@ export class CatalogCsvImportService {
             where: { variantId: variant.id, isActive: true },
             data: { isActive: false },
           });
-          const ingredients = [];
-          for (const inciName of row.inci_names) {
-            ingredients.push(
-              await transaction.ingredient.upsert({
-                where: { inciName },
-                update: {},
-                create: {
-                  inciName,
-                  slug: slugify(inciName),
-                  commonNames: [],
-                  functions: [],
-                },
-              }),
-            );
-          }
           await transaction.formulaVersion.create({
             data: {
               variantId: variant.id,

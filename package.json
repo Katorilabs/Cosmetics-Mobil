@@ -27,7 +27,7 @@
     "test:e2e": "npm run test:e2e --workspace @cosmedia/api",
     "test:coverage": "npm run test:coverage --workspace @cosmedia/api",
     "db:generate": "npm run db:generate --workspace @cosmedia/api",
-    "db:migrate": "npm run db:migrate --workspace @cosmedia/api",
+    "db:migrate": "npm run db:migrate --workspace @cosmedia/api --",
     "db:deploy": "npm run db:deploy --workspace @cosmedia/api",
     "db:seed": "npm run db:seed --workspace @cosmedia/api",
     "db:studio": "npm run db:studio --workspace @cosmedia/api"

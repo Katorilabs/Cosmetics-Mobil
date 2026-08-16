@@ -1,10 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service.js';
+import { IngredientNormalizationService } from '../ingredients/ingredient-normalization.service.js';
 import type { UpsertSkinProfileDto } from './dto/upsert-skin-profile.dto.js';
 
 @Injectable()
 export class ProfilesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ingredientNormalization: IngredientNormalizationService,
+  ) {}
 
   async get(userId: string) {
     const profile = await this.prisma.skinProfile.findUnique({ where: { userId } });
@@ -20,11 +24,12 @@ export class ProfilesService {
   }
 
   async upsert(userId: string, input: UpsertSkinProfileDto) {
+    const avoidInci = await this.ingredientNormalization.resolvePreferenceNames(input.avoidInci);
     const data = {
       skinType: input.skinType,
       concerns: input.concerns,
       allergies: this.normalize(input.allergies),
-      avoidInci: this.normalize(input.avoidInci, true),
+      avoidInci,
     };
 
     return this.prisma.skinProfile.upsert({
