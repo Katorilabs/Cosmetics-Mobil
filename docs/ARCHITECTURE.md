@@ -33,8 +33,8 @@ Scraper worker (separate process, later)
 - `ingredients`: canonical name normalization and reviewed alias resolution.
 - `favorites`: authenticated, paginated product-variant bookmarks.
 - `matching`: profile-aware variant filtering and reviewed evidence explanations.
+- `scoring`: immutable rule-set versions and idempotent profile/formula score snapshots.
 - Future `reviews`: profile snapshots, moderation and aggregate experience metrics.
-- Future `scoring`: versioned, explainable formula/profile score calculation.
 - Future `moderation`: approval workflow for imported and scraped data.
 
 Controllers handle HTTP concerns, services contain use-case logic, and Prisma is
@@ -63,6 +63,13 @@ internal files; shared behavior must be exposed by the owning module.
   removed through database cascades with either owning record.
 - Scores are snapshots tied to a formula and scoring version. Explanations and
   confidence are stored with the number shown to a user.
+- Score rule conditions use a validated, allow-listed JSON DSL; stored JSON is never
+  evaluated as executable code. A version is immutable after creation and activation
+  switches all rules atomically.
+- The profile key is a one-way SHA-256 hash of normalized scoring inputs rather than a
+  user identifier. Equal formula/profile/rule inputs reuse one snapshot.
+- Score confidence describes input completeness only. The score is a profile/formula
+  match index and explicitly does not claim medical safety or efficacy.
 - Scraped data never becomes public automatically. It enters a review workflow.
 - Demo seed data is idempotent and clearly separated from verified production data.
 
@@ -99,6 +106,8 @@ internal files; shared behavior must be exposed by the owning module.
   inferred as INCI names without an explicit user choice.
 - Matching never infers concentration from INCI order and returns evidence sources,
   matched profile fields and a non-medical-advice disclaimer with every page.
+- Scoring clamps results to `0–100`, deduplicates evidence by ingredient/effect and
+  carries the rule contribution and source evidence in its persisted explanation.
 - CSV catalogue imports are limited to 1 MB/1,000 rows, fully validated before
   writes, and applied in one transaction. Re-imports update stable product and
   variant keys without duplicating unchanged formula versions.
@@ -112,12 +121,13 @@ future job boundary.
 
 ## Verification strategy
 
-- Unit tests validate isolated guards, ingredient/alias normalization, profile
-  normalization, catalogue services, CSV parsing and the shared HTTP error contract.
+- Unit tests validate isolated guards, ingredient/alias normalization, score-rule
+  validation/calculation, profile normalization, catalogue services, CSV parsing and
+  the shared HTTP error contract.
 - E2E tests boot the NestJS application with the same production bootstrap
   configuration and send real HTTP requests through Supertest.
 - E2E tests use PostgreSQL, apply committed migrations, verify catalogue import
-  idempotency, alias resolution/removal and authenticated user/profile/favorite/matching
-  flows, then remove only namespaced fixture records afterward.
+  idempotency, alias resolution/removal and authenticated user/profile/favorite/matching/
+  scoring flows, then remove only namespaced fixture records afterward.
 - GitHub Actions provisions a clean PostgreSQL 17 service for every pull request
   and `main` push before running unit tests, E2E tests and the production build.

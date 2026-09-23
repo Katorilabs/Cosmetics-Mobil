@@ -1,6 +1,6 @@
 import { UnauthorizedException, type INestApplication } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
-import type { NestExpressApplication } from '@nestjs/platform-express';
+import { ExpressAdapter, type NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
 import { AppModule } from '../src/app.module.js';
 import { configureApp } from '../src/app.setup.js';
@@ -17,6 +17,7 @@ const AVOIDED_PRODUCT_SLUG = 'e2e-avoided-product';
 const FAVORITE_BRAND_SLUG = 'e2e-favorite-brand';
 const FAVORITE_CATEGORY_SLUG = 'e2e-favorite-category';
 const MATCH_INGREDIENT_NAMES = ['E2E NIACINAMIDE', 'E2E PARFUM'];
+const E2E_SCORING_VERSION = 900_001;
 
 class TestTokenVerifier extends AuthTokenVerifier {
   async verify(token: string): Promise<VerifiedIdentity> {
@@ -39,7 +40,9 @@ describe('Identity and skin profile API (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let favoriteVariantId: string;
+  let avoidedVariantId: string;
   let favoriteCategoryId: string;
+  let previouslyActiveScoringVersions: number[] = [];
 
   const authenticated = () => ({ authorization: `Bearer ${VALID_TOKEN}` });
 
@@ -133,6 +136,7 @@ describe('Identity and skin profile API (e2e)', () => {
     const avoidedVariant = await prisma.productVariant.create({
       data: { productId: avoidedProduct.id, name: '30 ml', sizeValue: 30, sizeUnit: 'ml' },
     });
+    avoidedVariantId = avoidedVariant.id;
     const avoidedIngredient = await prisma.ingredient.create({
       data: {
         inciName: MATCH_INGREDIENT_NAMES[1]!,
@@ -161,6 +165,63 @@ describe('Identity and skin profile API (e2e)', () => {
     });
   }
 
+  async function createScoringFixture(): Promise<void> {
+    await prisma.scoreRule.deleteMany({ where: { version: E2E_SCORING_VERSION } });
+    const activeRules = await prisma.scoreRule.findMany({
+      where: { isActive: true },
+      distinct: ['version'],
+      select: { version: true },
+    });
+    previouslyActiveScoringVersions = activeRules.map((rule) => rule.version);
+    await prisma.scoreRule.updateMany({ data: { isActive: false } });
+    await prisma.scoreRule.createMany({
+      data: [
+        {
+          code: 'BASE_SCORE',
+          name: 'E2E baseline',
+          description: 'E2E neutral baseline',
+          version: E2E_SCORING_VERSION,
+          weight: 50,
+          conditions: { kind: 'BASE' },
+          isActive: true,
+        },
+        {
+          code: 'EXPLICIT_AVOID_INCI',
+          name: 'E2E explicit avoid',
+          description: 'E2E hard user preference',
+          version: E2E_SCORING_VERSION,
+          weight: -100,
+          conditions: { kind: 'EXPLICIT_AVOID', maxMatches: 1 },
+          isActive: true,
+        },
+        {
+          code: 'PROFILE_BENEFICIAL_EVIDENCE',
+          name: 'E2E beneficial evidence',
+          description: 'E2E reviewed beneficial signal',
+          version: E2E_SCORING_VERSION,
+          weight: 10,
+          conditions: {
+            kind: 'EVIDENCE_EFFECT',
+            effect: 'BENEFICIAL',
+            maxMatches: 3,
+            levelMultipliers: { LOW: 0.5, MODERATE: 0.75, HIGH: 1 },
+          },
+          isActive: true,
+        },
+      ],
+    });
+  }
+
+  async function cleanScoringFixture(): Promise<void> {
+    await prisma.scoreRule.deleteMany({ where: { version: E2E_SCORING_VERSION } });
+    if (previouslyActiveScoringVersions.length > 0) {
+      await prisma.scoreRule.updateMany({
+        where: { version: { in: previouslyActiveScoringVersions } },
+        data: { isActive: true },
+      });
+    }
+  }
+
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -169,18 +230,24 @@ describe('Identity and skin profile API (e2e)', () => {
       .useClass(TestTokenVerifier)
       .compile();
 
-    const expressApp = moduleFixture.createNestApplication<NestExpressApplication>();
+    const expressApp = moduleFixture.createNestApplication<NestExpressApplication>(
+      new ExpressAdapter(),
+    );
     configureApp(expressApp, { enableShutdownHooks: false });
     await expressApp.init();
 
     app = expressApp;
     prisma = app.get(PrismaService);
     await cleanFixtureData();
+    await createScoringFixture();
     await createFavoriteFixture();
   });
 
   afterAll(async () => {
-    if (prisma) await cleanFixtureData();
+    if (prisma) {
+      await cleanFixtureData();
+      await cleanScoringFixture();
+    }
     if (app) await app.close();
   });
 
@@ -363,6 +430,64 @@ describe('Identity and skin profile API (e2e)', () => {
         explicitAvoidedIngredients: ['E2E PARFUM'],
       },
     });
+  });
+
+  it('calculates and reuses a versioned explainable score snapshot', async () => {
+    const first = await request(app.getHttpServer())
+      .get(`/api/v1/me/product-scores/${favoriteVariantId}`)
+      .set(authenticated())
+      .expect(200);
+    const second = await request(app.getHttpServer())
+      .get(`/api/v1/me/product-scores/${favoriteVariantId}`)
+      .set(authenticated())
+      .expect(200);
+
+    expect(first.body).toMatchObject({
+      variant: { id: favoriteVariantId, product: { slug: FAVORITE_PRODUCT_SLUG } },
+      score: 57.5,
+      band: 'MODERATE_MATCH',
+      confidence: 1,
+      scoringVersion: E2E_SCORING_VERSION,
+      guidance: {
+        meaning: 'PROFILE_FORMULA_MATCH_INDEX',
+        medicalAdvice: false,
+        safetyGuarantee: false,
+        efficacyGuarantee: false,
+        formulaConcentrationKnown: false,
+      },
+    });
+    expect(first.body.explanation.appliedRules).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'PROFILE_BENEFICIAL_EVIDENCE',
+        matchCount: 1,
+        adjustment: 7.5,
+      }),
+    ]));
+    expect(second.body.calculatedAt).toBe(first.body.calculatedAt);
+    await expect(prisma.scoreSnapshot.count({
+      where: { variantId: favoriteVariantId, scoringVersion: E2E_SCORING_VERSION },
+    })).resolves.toBe(1);
+  });
+
+  it('scores an explicitly avoided ingredient as a low match', async () => {
+    const response = await request(app.getHttpServer())
+      .get(`/api/v1/me/product-scores/${avoidedVariantId}`)
+      .set(authenticated())
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      variant: { id: avoidedVariantId, product: { slug: AVOIDED_PRODUCT_SLUG } },
+      score: 0,
+      band: 'LOW_MATCH',
+      scoringVersion: E2E_SCORING_VERSION,
+    });
+    expect(response.body.explanation.appliedRules).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'EXPLICIT_AVOID_INCI',
+        matchCount: 1,
+        adjustment: -100,
+      }),
+    ]));
   });
 
   it('returns the persisted skin profile', async () => {

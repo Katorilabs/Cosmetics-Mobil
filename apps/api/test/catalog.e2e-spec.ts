@@ -1,6 +1,6 @@
 import type { INestApplication } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
-import type { NestExpressApplication } from '@nestjs/platform-express';
+import { ExpressAdapter, type NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
 import { AppModule } from '../src/app.module.js';
 import { configureApp } from '../src/app.setup.js';
@@ -11,6 +11,7 @@ const PRODUCT_SLUG = 'e2e-csv-product';
 const BRAND_SLUG = 'e2e-test-lab';
 const CATEGORY_SLUG = 'e2e-serum';
 const INGREDIENT_NAMES = ['E2E AQUA', 'E2E GLYCERIN', 'E2E NIACINAMIDE'];
+const SCORE_RULE_VERSION = 900_002;
 
 const csvContent = [
   'brand,category,product_name,status,variant_name,size_value,size_unit,barcode,raw_inci,inci_names,confidence',
@@ -23,6 +24,7 @@ describe('Catalog API (e2e)', () => {
   let ingredientAliasId: string;
 
   async function cleanFixtureData(): Promise<void> {
+    await prisma.scoreRule.deleteMany({ where: { version: SCORE_RULE_VERSION } });
     await prisma.product.deleteMany({ where: { slug: PRODUCT_SLUG } });
     await prisma.ingredient.deleteMany({
       where: { inciName: { in: INGREDIENT_NAMES }, occurrences: { none: {} } },
@@ -36,7 +38,9 @@ describe('Catalog API (e2e)', () => {
       imports: [AppModule],
     }).compile();
 
-    const expressApp = moduleFixture.createNestApplication<NestExpressApplication>();
+    const expressApp = moduleFixture.createNestApplication<NestExpressApplication>(
+      new ExpressAdapter(),
+    );
     configureApp(expressApp, { enableShutdownHooks: false });
     await expressApp.init();
 
@@ -214,5 +218,49 @@ describe('Catalog API (e2e)', () => {
     await expect(prisma.productIngredient.count({
       where: { ingredient: { normalizedName: 'E2E NIACINAMIDE' } },
     })).resolves.toBeGreaterThan(0);
+  });
+
+  it('creates and lists an immutable score rule-set version', async () => {
+    const payload = {
+      version: SCORE_RULE_VERSION,
+      activate: false,
+      rules: [{
+        code: 'BASE_SCORE',
+        name: 'E2E scoring baseline',
+        description: 'E2E-only neutral scoring baseline',
+        weight: 50,
+        conditions: { kind: 'BASE' },
+      }],
+    };
+    const createResponse = await request(app.getHttpServer())
+      .post('/api/v1/admin/scoring/rule-sets')
+      .set('x-admin-key', ADMIN_API_KEY)
+      .send(payload)
+      .expect(201);
+
+    expect(createResponse.body).toEqual([
+      expect.objectContaining({
+        code: 'BASE_SCORE',
+        version: SCORE_RULE_VERSION,
+        isActive: false,
+      }),
+    ]);
+
+    const listResponse = await request(app.getHttpServer())
+      .get('/api/v1/admin/scoring/rules')
+      .set('x-admin-key', ADMIN_API_KEY)
+      .query({ version: SCORE_RULE_VERSION })
+      .expect(200);
+    expect(listResponse.body).toHaveLength(1);
+
+    const conflictResponse = await request(app.getHttpServer())
+      .post('/api/v1/admin/scoring/rule-sets')
+      .set('x-admin-key', ADMIN_API_KEY)
+      .send(payload)
+      .expect(409);
+    expect(conflictResponse.body.error).toMatchObject({
+      code: 'SCORE_RULESET_VERSION_EXISTS',
+      status: 409,
+    });
   });
 });

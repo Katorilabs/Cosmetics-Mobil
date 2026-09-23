@@ -18,6 +18,7 @@ admin paneli ve scraper worker sonraki aşamalarda aynı monorepo içine eklenec
 - [API endpointleri](#api-endpointleri)
 - [Kimlik doğrulama kurulumu](#kimlik-doğrulama-kurulumu)
 - [Profil bazlı ürün eşleştirme](#profil-bazlı-ürün-eşleştirme)
+- [Açıklanabilir içerik skoru](#açıklanabilir-içerik-skoru)
 - [INCI alias ve normalizasyon](#inci-alias-ve-normalizasyon)
 - [CSV katalog importu](#csv-katalog-importu)
 - [API hata formatı](#api-hata-formatı)
@@ -62,7 +63,7 @@ kural sürümü ve güven seviyesi kullanıcıya açıklanacaktır.
 - PostgreSQL ve Prisma veri katmanı
 - İlk veritabanı migration'ı
 - Ürün listeleme ve ürün detay okuma modülü
-- Tekrar çalıştırılabilir demo seed (2 ürün, 7 INCI, 4 moderasyonlu alias, 1 evidence)
+- Tekrar çalıştırılabilir demo seed (2 ürün, 7 INCI, 4 alias, 1 evidence, 5 skor kuralı)
 - Admin marka/kategori oluşturma ve listeleme endpointleri
 - Transactional ürün + varyant + ilk formül oluşturma
 - Ürün güncelleme, arşivleme ve yeni formül versiyonu ekleme
@@ -76,6 +77,7 @@ kural sürümü ve güven seviyesi kullanıcıya açıklanacaktır.
 - Yayınlanmış ürün varyantları için idempotent ve sayfalı favori endpointleri
 - Kaçınılan INCI ve moderasyonlu kanıtlara dayalı açıklanabilir profil eşleştirme
 - Kanonik INCI adı, normalize anahtar ve moderasyonlu alias çözümleme altyapısı
+- Değiştirilemez kural sürümü, profil hash'i ve idempotent snapshot kullanan skor motoru
 - API/veritabanı health kontrolü
 - Swagger/OpenAPI dokümantasyonu
 - DTO doğrulama ve bilinmeyen alanları reddetme
@@ -93,7 +95,6 @@ Henüz hazır olmayan ana parçalar:
 - Sağlayıcı hesabı ile uygulama verisini birlikte silen hesap kapatma akışı
 - Mobil Expo uygulaması
 - Scraper worker ve moderasyon ekranı
-- Skor hesaplama motoru
 - Yorum endpointleri
 - Üretim deployment altyapısı
 
@@ -135,7 +136,8 @@ cosmedia/
 │       │       ├── ingredients/
 │       │       ├── matching/
 │       │       ├── profiles/
-│       │       └── products/
+│       │       ├── products/
+│       │       └── scoring/
 │       ├── jest.config.cjs
 │       └── package.json
 ├── docs/
@@ -155,7 +157,6 @@ apps/mobile/          # Expo + React Native
 apps/admin/           # Moderasyon ve katalog yönetimi
 workers/scraper/      # Playwright/Cheerio + BullMQ
 packages/contracts/   # Mobil/API ortak DTO ve şemaları
-packages/scoring/     # Açıklanabilir skor motoru
 ```
 
 ## İlk kurulum
@@ -240,8 +241,8 @@ npm run db:seed
 
 `db:deploy`, repository'de bulunan migration'ları uygular. İlk kurulumda yeniden
 `init` migration'ı oluşturmayın. `db:seed` iki yayınlanmış demo ürün, bunların normalize
-INCI kayıtları, dört moderasyonlu alias ve bir evidence örneği oluşturur; komut tekrar
-çalıştırıldığında duplicate üretmez.
+INCI kayıtları, dört moderasyonlu alias, bir evidence örneği ve beş v1 skor kuralı
+oluşturur; komut tekrar çalıştırıldığında duplicate üretmez.
 
 ## Projeyi çalıştırma
 
@@ -305,6 +306,7 @@ Kullanıcı endpointleri `Authorization: Bearer <access-token>` header'ı gerekt
 | PUT | `/api/v1/me/favorites/:variantId` | Yayınlanmış aktif varyantı idempotent favoriler |
 | DELETE | `/api/v1/me/favorites/:variantId` | Favoriyi idempotent kaldırır |
 | GET | `/api/v1/me/product-matches` | Cilt profiline göre açıklanabilir varyant eşleşmelerini listeler |
+| GET | `/api/v1/me/product-scores/:variantId` | Sürümlü profil/formül eşleşme skorunu getirir |
 
 `PUT /me/skin-profile`; `DRY`, `OILY`, `COMBINATION`, `NORMAL`, `SENSITIVE` cilt
 tiplerini ve şemada tanımlı endişeleri kabul eder. Kaçınılan INCI adları normalize
@@ -342,6 +344,9 @@ Admin katalog endpointleri `x-admin-key` header'ı gerektirir:
 | PATCH | `/api/v1/admin/catalog/products/:id` | Ürün bilgilerini veya yayın durumunu günceller |
 | DELETE | `/api/v1/admin/catalog/products/:id` | Ürünü fiziksel olarak silmeden arşivler |
 | POST | `/api/v1/admin/catalog/variants/:variantId/formulas` | Yeni versiyonlanmış INCI formülü ekler |
+| GET | `/api/v1/admin/scoring/rules` | Skor kurallarını sürüme göre listeler |
+| POST | `/api/v1/admin/scoring/rule-sets` | Değiştirilemez yeni kural sürümü oluşturur |
+| POST | `/api/v1/admin/scoring/rule-sets/:version/activate` | Bir kural sürümünü atomik olarak aktifleştirir |
 
 Lokal admin örneği:
 
@@ -436,6 +441,39 @@ gerekçeleriyle birlikte gösterilir.
 Demo seed, niasinamid için acne profiline ilişkin moderasyonlu bir örnek kanıt kaydı
 oluşturur. Kaynak: [PubMed PMID 7657446](https://pubmed.ncbi.nlm.nih.gov/7657446/).
 Seed özeti herhangi bir üründe aynı konsantrasyon veya klinik etki varsaymaz.
+
+## Açıklanabilir içerik skoru
+
+`GET /api/v1/me/product-scores/:variantId`, kullanıcının cilt profilini aktif formülle
+karşılaştırır ve `0–100` arasında bir **profil/formül eşleşme indeksi** döndürür. Bu
+değer güvenlik, toksisite, tedavi veya ürün etkinliği puanı değildir.
+
+Varsayılan v1 kural seti:
+
+| Kural | Ağırlık | Davranış |
+| --- | ---: | --- |
+| `BASE_SCORE` | `+50` | Nötr başlangıç değeri |
+| `PROFILE_BENEFICIAL_EVIDENCE` | `+10` | Kanıt seviyesine göre `0.5/0.75/1` çarpanı |
+| `PROFILE_CAUTION_EVIDENCE` | `-12` | Profil ile eşleşen moderasyonlu caution sinyali |
+| `PROFILE_AVOID_EVIDENCE` | `-30` | Profil ile eşleşen moderasyonlu avoid sinyali |
+| `EXPLICIT_AVOID_INCI` | `-100` | Kullanıcının açık `avoidInci` tercihi |
+
+Her kuralın katkısı, eşleşen içerikleri ve kaynak kanıtları `explanation.appliedRules`
+alanında gösterilir. Aynı içerik ve etki için birden fazla çalışma varsa en güçlü
+kanıt seviyesi bir kez sayılır. Sonuç `0–100` aralığına sınırlandırılır ve
+`LOW_MATCH`, `LIMITED_MATCH`, `MODERATE_MATCH` veya `STRONG_MATCH` bandı eklenir.
+
+`confidence`, ürün etkinliğinin olasılığı değildir; formül kaynağının güven değeriyle
+çözümlenmiş/kesin içerik oranından hesaplanan veri tamlığı göstergesidir. Formül
+konsantrasyonları INCI listesinden bilinmediği için response her zaman
+`formulaConcentrationKnown=false`, `safetyGuarantee=false` ve
+`efficacyGuarantee=false` sınırlarını taşır.
+
+Snapshot anahtarı aktif formül, sıralanmış profil tercihleri hash'i ve kural sürümünden
+oluşur. Aynı girdi tekrar istendiğinde yeni kayıt üretilmez. Kural sürümleri oluşturma
+sonrasında değiştirilmez; yeni metodoloji yeni bir sürüm olarak eklenir ve admin
+endpointiyle atomik biçimde aktifleştirilir. Eski snapshot'lar karşılaştırılabilirlik
+için korunur.
 
 ## INCI alias ve normalizasyon
 
@@ -571,6 +609,9 @@ Brand ──< Product >── Category
    FormulaVersion ──< ProductIngredient >── Ingredient ──< IngredientAlias
         |                                      |
         +──< ScoreSnapshot                     +──< IngredientEvidence
+                  ^
+                  |
+          ScoreRule (versioned)
 
 User ── SkinProfile
   |
@@ -591,7 +632,8 @@ User ── SkinProfile
   tek kayıt vardır ve ilişkili kayıt silindiğinde cascade ile temizlenir.
 - Ingredient evidence yönü bilinmiyorsa `INFORMATIONAL` kalır ve profil sinyali
   üretmez; yalnızca moderasyonlu/yönlendirilmiş kanıt eşleştirmeye katılır.
-- Skor, formül ve scoring sürümüne bağlı snapshot olarak tutulur.
+- Skor, formül, anonim profil hash'i ve scoring sürümüne bağlı idempotent snapshot
+  olarak tutulur; açıklama ve veri güveni gösterilen sayıyla birlikte sabitlenir.
 - Scraper verisi otomatik yayınlanmaz; moderasyon akışına girecek şekilde modellenir.
 
 Şemanın tamamı: [`apps/api/prisma/schema.prisma`](apps/api/prisma/schema.prisma)
@@ -632,7 +674,7 @@ audience, süre ve izinli algoritma doğrulanmadan hiçbir claim güvenilir kabu
 | `npm run test:coverage` | Coverage raporu üretir |
 | `npm run db:generate` | Prisma Client üretir |
 | `npm run db:deploy` | Mevcut migration'ları uygular |
-| `npm run db:seed` | İdempotent demo katalog verisini yükler |
+| `npm run db:seed` | İdempotent demo katalog, evidence ve skor kurallarını yükler |
 | `npm run db:migrate -- --name <ad>` | Yeni migration oluşturur ve uygular |
 | `npm run db:studio` | Prisma Studio arayüzünü açar |
 
@@ -669,8 +711,8 @@ git diff --check
 
 `npm run test:e2e` için Docker PostgreSQL servisi çalışıyor ve migration'lar uygulanmış
 olmalıdır. Test paketi yalnızca `e2e-` önekli kendi katalog, kullanıcı, profil ve
-favori/evidence verisini oluşturur; test sonunda bunları temizler ve seed/geliştirici
-verilerine dokunmaz.
+favori/evidence/scoring verisini oluşturur; test sonunda bunları temizler ve
+seed/geliştirici verilerine dokunmaz.
 
 GitHub Actions şu durumlarda otomatik çalışır:
 
@@ -685,8 +727,8 @@ CI şu kontrolleri yapar:
 4. Prisma Client üretir ve commit edilmiş migration'ları uygular.
 5. Unit testleri çalıştırır.
 6. Health, admin yetkilendirme, ortak hata formatı, CSV import/idempotency, kullanıcı
-   eşleme, cilt profili, favori ve açıklanabilir ürün eşleştirme akışlarını gerçek HTTP
-   istekleriyle test eder.
+   eşleme, cilt profili, favori, ürün eşleştirme ve idempotent skor snapshot akışlarını
+   gerçek HTTP istekleriyle test eder.
 7. Production build alır.
 
 ## Ekip çalışma düzeni
@@ -756,8 +798,8 @@ Pull request açıklamasında şunlar bulunmalı:
 - [x] INCI alias/normalizasyon sistemi
 - [x] Evidence yönü (`INFORMATIONAL/BENEFICIAL/CAUTION/AVOID`) temeli
 - Kaynak ve bilimsel kanıt yönetimi
-- Versiyonlanmış skor kuralları
-- Skor açıklaması ve güven seviyesi
+- [x] Versiyonlanmış skor kuralları
+- [x] Skor açıklaması ve veri güven seviyesi
 - Benzer profil yorum istatistikleri
 
 ### Aşama 4 — Mobil MVP

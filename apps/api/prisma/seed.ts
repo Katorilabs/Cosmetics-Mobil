@@ -95,7 +95,73 @@ const ingredientAliases = [
   { inciName: 'PANTHENOL', alias: 'Provitamin B5' },
 ];
 
+const scoreRules = [
+  {
+    code: 'BASE_SCORE',
+    name: 'Profile match baseline',
+    description: 'Neutral starting point before profile-relevant signals are applied.',
+    weight: 50,
+    conditions: { kind: 'BASE' },
+  },
+  {
+    code: 'EXPLICIT_AVOID_INCI',
+    name: 'Explicitly avoided ingredient',
+    description: 'Applies the user’s explicit avoidInci preference as a hard negative signal.',
+    weight: -100,
+    conditions: { kind: 'EXPLICIT_AVOID', maxMatches: 1 },
+  },
+  {
+    code: 'PROFILE_BENEFICIAL_EVIDENCE',
+    name: 'Profile-relevant beneficial evidence',
+    description: 'Adds points for distinct ingredients with reviewed, profile-relevant beneficial evidence.',
+    weight: 10,
+    conditions: {
+      kind: 'EVIDENCE_EFFECT',
+      effect: EvidenceEffect.BENEFICIAL,
+      maxMatches: 3,
+      levelMultipliers: { LOW: 0.5, MODERATE: 0.75, HIGH: 1 },
+    },
+  },
+  {
+    code: 'PROFILE_CAUTION_EVIDENCE',
+    name: 'Profile-relevant caution evidence',
+    description: 'Subtracts points for distinct ingredients with reviewed, profile-relevant caution evidence.',
+    weight: -12,
+    conditions: {
+      kind: 'EVIDENCE_EFFECT',
+      effect: EvidenceEffect.CAUTION,
+      maxMatches: 3,
+      levelMultipliers: { LOW: 0.5, MODERATE: 0.75, HIGH: 1 },
+    },
+  },
+  {
+    code: 'PROFILE_AVOID_EVIDENCE',
+    name: 'Profile-relevant avoid evidence',
+    description: 'Subtracts points for distinct ingredients with reviewed, profile-relevant avoid evidence.',
+    weight: -30,
+    conditions: {
+      kind: 'EVIDENCE_EFFECT',
+      effect: EvidenceEffect.AVOID,
+      maxMatches: 3,
+      levelMultipliers: { LOW: 0.5, MODERATE: 0.75, HIGH: 1 },
+    },
+  },
+];
+
 async function seed(): Promise<void> {
+  const hasActiveScoreRuleSet = await prisma.scoreRule.count({ where: { isActive: true } }) > 0;
+  for (const rule of scoreRules) {
+    await prisma.scoreRule.upsert({
+      where: { code_version: { code: rule.code, version: 1 } },
+      update: !hasActiveScoreRuleSet ? { isActive: true } : {},
+      create: {
+        ...rule,
+        version: 1,
+        isActive: !hasActiveScoreRuleSet,
+      },
+    });
+  }
+
   const brand = await prisma.brand.upsert({
     where: { slug: 'cosmedia-demo-lab' },
     update: { name: 'Cosmedia Demo Lab', website: 'https://example.com' },
@@ -269,7 +335,7 @@ async function seed(): Promise<void> {
   }
 
   console.log(
-    `Seed complete: ${products.length} products, ${ingredients.length} ingredients, ${ingredientAliases.length} reviewed aliases, 1 reviewed evidence record`,
+    `Seed complete: ${products.length} products, ${ingredients.length} ingredients, ${ingredientAliases.length} reviewed aliases, 1 reviewed evidence record, ${scoreRules.length} score rules`,
   );
 }
 

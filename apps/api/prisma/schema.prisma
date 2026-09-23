@@ -292,7 +292,7 @@ model Review {
 
 model ScoreRule {
   id          String   @id @default(uuid()) @db.Uuid
-  code        String   @unique
+  code        String
   name        String
   description String
   version     Int
@@ -302,6 +302,7 @@ model ScoreRule {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
+  @@unique([code, version])
   @@index([isActive, version])
   @@map("score_rules")
 }
