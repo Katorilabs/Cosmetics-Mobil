@@ -19,6 +19,7 @@ admin paneli ve scraper worker sonraki aşamalarda aynı monorepo içine eklenec
 - [Kimlik doğrulama kurulumu](#kimlik-doğrulama-kurulumu)
 - [Profil bazlı ürün eşleştirme](#profil-bazlı-ürün-eşleştirme)
 - [Açıklanabilir içerik skoru](#açıklanabilir-içerik-skoru)
+- [Kaynak ve kanıt yönetimi](#kaynak-ve-kanıt-yönetimi)
 - [INCI alias ve normalizasyon](#inci-alias-ve-normalizasyon)
 - [CSV katalog importu](#csv-katalog-importu)
 - [API hata formatı](#api-hata-formatı)
@@ -77,6 +78,8 @@ kural sürümü ve güven seviyesi kullanıcıya açıklanacaktır.
 - Yayınlanmış ürün varyantları için idempotent ve sayfalı favori endpointleri
 - Kaçınılan INCI ve moderasyonlu kanıtlara dayalı açıklanabilir profil eşleştirme
 - Kanonik INCI adı, normalize anahtar ve moderasyonlu alias çözümleme altyapısı
+- Kaynak atıflı kanıt oluşturma, düzenleme, onaylama ve onay geri çekme API’si
+- Revizyon denetimiyle eşzamanlı kanıt düzenleme/moderasyon koruması
 - Değiştirilemez kural sürümü, profil hash'i ve idempotent snapshot kullanan skor motoru
 - API/veritabanı health kontrolü
 - Swagger/OpenAPI dokümantasyonu
@@ -344,6 +347,12 @@ Admin katalog endpointleri `x-admin-key` header'ı gerektirir:
 | PATCH | `/api/v1/admin/catalog/products/:id` | Ürün bilgilerini veya yayın durumunu günceller |
 | DELETE | `/api/v1/admin/catalog/products/:id` | Ürünü fiziksel olarak silmeden arşivler |
 | POST | `/api/v1/admin/catalog/variants/:variantId/formulas` | Yeni versiyonlanmış INCI formülü ekler |
+| GET | `/api/v1/admin/catalog/evidence` | Kanıtları içerik, kaynak araması, seviye, etki ve onay durumuyla sayfalı listeler |
+| GET | `/api/v1/admin/catalog/evidence/:id` | Kanıtı güncel revizyonuyla getirir |
+| POST | `/api/v1/admin/catalog/ingredients/:ingredientId/evidence` | Kaynak atıflı, onay bekleyen kanıt oluşturur |
+| PUT | `/api/v1/admin/catalog/evidence/:id` | Kanıt içeriğini tamamen değiştirir ve onayını kaldırır |
+| POST | `/api/v1/admin/catalog/evidence/:id/approve` | Okunan revizyonu onaylar |
+| POST | `/api/v1/admin/catalog/evidence/:id/revoke` | Kaydı silmeden onayını geri çeker |
 | GET | `/api/v1/admin/scoring/rules` | Skor kurallarını sürüme göre listeler |
 | POST | `/api/v1/admin/scoring/rule-sets` | Değiştirilemez yeni kural sürümü oluşturur |
 | POST | `/api/v1/admin/scoring/rule-sets/:version/activate` | Bir kural sürümünü atomik olarak aktifleştirir |
@@ -469,11 +478,54 @@ konsantrasyonları INCI listesinden bilinmediği için response her zaman
 `formulaConcentrationKnown=false`, `safetyGuarantee=false` ve
 `efficacyGuarantee=false` sınırlarını taşır.
 
-Snapshot anahtarı aktif formül, sıralanmış profil tercihleri hash'i ve kural sürümünden
-oluşur. Aynı girdi tekrar istendiğinde yeni kayıt üretilmez. Kural sürümleri oluşturma
+Snapshot anahtarı aktif formül, sıralanmış profil tercihleri hash'i, kural sürümü ve
+hesaba katılan kanıt içeriğinin SHA-256 hash'inden (`evidenceKey`) oluşur. Aynı girdi tekrar istendiğinde yeni kayıt üretilmez. Kural sürümleri oluşturma
 sonrasında değiştirilmez; yeni metodoloji yeni bir sürüm olarak eklenir ve admin
 endpointiyle atomik biçimde aktifleştirilir. Eski snapshot'lar karşılaştırılabilirlik
-için korunur.
+için korunur. Kanıt onayı geri çekildiğinde veya onaylı içerik/kaynak değiştiğinde
+sonraki skor isteği güncel girdilere ait snapshot'ı kullanır; eski sonuç üzerine
+yazılmaz. Migration öncesi kayıtlar `evidenceKey=legacy` ile korunur.
+
+## Kaynak ve kanıt yönetimi
+
+Kaynak bilgisi her `IngredientEvidence` üzerinde `sourceName`, `sourceUrl` ve isteğe
+bağlı `publishedAt` ile tutulur. Bu aşamada ayrı kaynak kataloğu veya yönetim ekranı
+bulunmaz; yönetim admin API ve Swagger üzerinden yapılır. HTTP(S) bağlantıları
+atıf olarak saklanır, API bu adreslere istek göndermez. Kaynağın bilimsel geçerliliği
+ve kanıt seviyesi moderatör tarafından değerlendirilir; otomatik doğrulama yapılmaz.
+
+Örnek oluşturma gövdesi (test amaçlıdır, gerçek bilimsel kanıt değildir):
+
+```json
+{
+  "title": "Örnek çalışma başlığı",
+  "summary": "Çalışmanın bulguları, kapsamı ve sınırlılıkları burada özetlenir.",
+  "sourceName": "Örnek kaynak",
+  "sourceUrl": "https://example.com/study",
+  "level": "MODERATE",
+  "effect": "BENEFICIAL",
+  "skinTypes": ["COMBINATION"],
+  "concerns": ["ACNE"],
+  "publishedAt": "2020-01-01T00:00:00.000Z"
+}
+```
+
+Oluşturulan kayıt `revision=1`, `reviewedAt=null` ile başlar. Onaylama veya onayı
+kaldırma isteği, son okunan revizyonu `{"revision":1}` biçiminde gönderir. Her işlem
+revizyonu artırır. `PUT`, tüm içerik alanlarıyla birlikte güncel `revision` ister ve
+önceki onayı kaldırır; yayın tarihi gönderilmezse veya `null` ise temizlenir.
+Eski revizyonla düzenleme/onaylama `409 EVIDENCE_REVISION_CONFLICT` döndürür;
+istemci kaydı tekrar okuyup değişiklikleri değerlendirmelidir. İstemci `reviewedAt`
+alanını doğrudan yazamaz. Onay geri çekme kaydı silmez.
+
+Liste filtreleri: `ingredientId`, `search` (başlık, özet, kaynak adı veya URL),
+`state=PENDING|APPROVED`, `level`, `effect`, `page`, `limit` (en fazla 100).
+Yalnızca onaylı, profil hedefiyle eşleşen ve `INFORMATIONAL` olmayan kanıtlar
+kullanıcı eşleştirmelerine ve skorlara katılır. Boş hedef listeleri herkese yönelik
+kanıt anlamına gelmez; herhangi bir profile eşleşmez.
+
+Yeni migration için API'yi güncellemeden önce `npm run db:deploy`, ardından
+`npm run db:generate` ve `npm run build` çalıştırın.
 
 ## INCI alias ve normalizasyon
 
@@ -632,7 +684,7 @@ User ── SkinProfile
   tek kayıt vardır ve ilişkili kayıt silindiğinde cascade ile temizlenir.
 - Ingredient evidence yönü bilinmiyorsa `INFORMATIONAL` kalır ve profil sinyali
   üretmez; yalnızca moderasyonlu/yönlendirilmiş kanıt eşleştirmeye katılır.
-- Skor, formül, anonim profil hash'i ve scoring sürümüne bağlı idempotent snapshot
+- Skor, formül, anonim profil hash'i, kanıt hash'i ve scoring sürümüne bağlı idempotent snapshot
   olarak tutulur; açıklama ve veri güveni gösterilen sayıyla birlikte sabitlenir.
 - Scraper verisi otomatik yayınlanmaz; moderasyon akışına girecek şekilde modellenir.
 
@@ -797,7 +849,7 @@ Pull request açıklamasında şunlar bulunmalı:
 
 - [x] INCI alias/normalizasyon sistemi
 - [x] Evidence yönü (`INFORMATIONAL/BENEFICIAL/CAUTION/AVOID`) temeli
-- Kaynak ve bilimsel kanıt yönetimi
+- [x] Kaynak atıfları ve bilimsel kanıt yönetimi admin API’si
 - [x] Versiyonlanmış skor kuralları
 - [x] Skor açıklaması ve veri güven seviyesi
 - Benzer profil yorum istatistikleri

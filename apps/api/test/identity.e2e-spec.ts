@@ -490,6 +490,45 @@ describe('Identity and skin profile API (e2e)', () => {
     ]));
   });
 
+  it('refreshes scores and matches after evidence moderation while preserving history', async () => {
+    const admin = { 'x-admin-key': process.env.ADMIN_API_KEY! };
+    const evidence = await prisma.ingredientEvidence.findFirstOrThrow({
+      where: { ingredient: { inciName: MATCH_INGREDIENT_NAMES[0] } },
+    });
+    const score = () => request(app.getHttpServer())
+      .get(`/api/v1/me/product-scores/${favoriteVariantId}`).set(authenticated()).expect(200);
+    const matches = () => request(app.getHttpServer())
+      .get('/api/v1/me/product-matches').query({ categoryId: favoriteCategoryId })
+      .set(authenticated()).expect(200);
+    const original = await score();
+    const path = `/api/v1/admin/catalog/evidence/${evidence.id}`;
+    const revoked = await request(app.getHttpServer()).post(`${path}/revoke`)
+      .set(admin).send({ revision: evidence.revision }).expect(200);
+    const withdrawn = await score();
+    expect(withdrawn.body.score).toBe(50);
+    expect(withdrawn.body.evidenceKey).not.toBe(original.body.evidenceKey);
+    expect((await matches()).body.data.find((item: { id: string }) => item.id === favoriteVariantId)
+      .match.beneficialSignals).toHaveLength(0);
+    const replacement = await request(app.getHttpServer()).put(path).set(admin).send({
+      title: 'Updated E2E citation', summary: evidence.summary,
+      sourceName: evidence.sourceName, sourceUrl: 'https://example.com/revised-study',
+      level: 'HIGH', effect: 'BENEFICIAL', skinTypes: evidence.skinTypes, concerns: evidence.concerns,
+      revision: revoked.body.revision,
+    }).expect(200);
+    expect((await score()).body.evidenceKey).toBe(withdrawn.body.evidenceKey);
+    await request(app.getHttpServer()).post(`${path}/approve`).set(admin)
+      .send({ revision: replacement.body.revision }).expect(200);
+    const revised = await score();
+    expect(revised.body.score).toBe(60);
+    expect(revised.body.evidenceKey).not.toBe(original.body.evidenceKey);
+    expect((await score()).body.calculatedAt).toBe(revised.body.calculatedAt);
+    expect((await matches()).body.data.find((item: { id: string }) => item.id === favoriteVariantId)
+      .match.beneficialSignals[0].evidence.title).toBe('Updated E2E citation');
+    const history = await prisma.scoreSnapshot.findMany({ where: { variantId: favoriteVariantId } });
+    expect(history).toHaveLength(3);
+    expect(history.find((item) => item.evidenceKey === original.body.evidenceKey)?.score.toNumber()).toBe(57.5);
+  });
+
   it('returns the persisted skin profile', async () => {
     const response = await request(app.getHttpServer())
       .get('/api/v1/me/skin-profile')

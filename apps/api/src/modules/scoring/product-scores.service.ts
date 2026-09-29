@@ -60,6 +60,7 @@ export class ProductScoresService {
                       inciName: true,
                       evidence: {
                         where: evidenceRelevance,
+                        orderBy: { id: 'asc' },
                         select: {
                           title: true,
                           summary: true,
@@ -131,18 +132,27 @@ export class ProductScoresService {
       concerns: profile.concerns,
       avoidInci,
     });
+    // Hash the exact reviewed evidence used by this calculation, preserving old snapshots.
+    const evidenceKey = createHash('sha256').update(JSON.stringify(
+      formula.ingredients.map((entry) => ({
+        inciName: entry.ingredient?.inciName ?? null,
+        evidence: entry.ingredient?.evidence ?? [],
+      })),
+    )).digest('hex');
     const explanation = {
+      evidenceKey,
       ...result,
       profile: { skinType: profile.skinType, concerns: [...profile.concerns].sort() },
       formula: { id: formula.id, version: formula.version },
     };
     const snapshot = await this.prisma.scoreSnapshot.upsert({
       where: {
-        variantId_formulaId_profileKey_scoringVersion: {
+        variantId_formulaId_profileKey_scoringVersion_evidenceKey: {
           variantId: variant.id,
           formulaId: formula.id,
           profileKey,
           scoringVersion: activeRule.version,
+          evidenceKey,
         },
       },
       update: {},
@@ -153,6 +163,7 @@ export class ProductScoresService {
         score: result.score,
         confidence: result.confidence,
         scoringVersion: activeRule.version,
+        evidenceKey,
         explanation: explanation as Prisma.InputJsonValue,
       },
     });
@@ -172,6 +183,7 @@ export class ProductScoresService {
       band: storedBand,
       confidence: Number(snapshot.confidence),
       scoringVersion: snapshot.scoringVersion,
+      evidenceKey: snapshot.evidenceKey,
       explanation: snapshot.explanation,
       calculatedAt: snapshot.createdAt,
       guidance: {

@@ -27,7 +27,7 @@ Scraper worker (separate process, later)
 
 - `health`: runtime and database readiness.
 - `products`: public product catalogue and active formula reads.
-- `admin`: protected catalogue writes, formula versioning and product lifecycle.
+- `admin`: protected catalogue writes, evidence citations/moderation, formula versioning and product lifecycle.
 - `identity`: OIDC token validation, external subject mapping and current-user data.
 - `profiles`: authenticated skin profile and ingredient preferences.
 - `ingredients`: canonical name normalization and reviewed alias resolution.
@@ -57,6 +57,12 @@ internal files; shared behavior must be exposed by the owning module.
 - Ingredient evidence has an explicit direction. The default `INFORMATIONAL` value
   cannot generate a profile signal; only reviewed, directed evidence participates
   in matching.
+- Evidence citations remain embedded in each record (source name, HTTP(S) URL and
+  optional publication date). The API stores citations without fetching them.
+- Evidence starts pending. Full replacement clears approval; approve/revoke uses
+  an atomic revision comparison, returning 409 for stale moderation or edits.
+  This uses the existing admin key boundary; individual reviewer identity and a
+  full evidence edit audit log await managed admin roles.
 - Reviews store a profile snapshot so historical aggregates do not change when a
   user edits their current profile.
 - Favorites reference product variants, are unique per user/variant pair and are
@@ -67,7 +73,11 @@ internal files; shared behavior must be exposed by the owning module.
   evaluated as executable code. A version is immutable after creation and activation
   switches all rules atomically.
 - The profile key is a one-way SHA-256 hash of normalized scoring inputs rather than a
-  user identifier. Equal formula/profile/rule inputs reuse one snapshot.
+  user identifier. Equal formula/profile/rule/evidence inputs reuse one snapshot.
+- Snapshot uniqueness includes a SHA-256 evidence key computed from the exact
+  relevant approved citations read for scoring, in deterministic order. Moderation
+  changes affect subsequent reads without overwriting historical explanations.
+  Pre-migration snapshots keep a `legacy` key and are not reused for new reads.
 - Score confidence describes input completeness only. The score is a profile/formula
   match index and explicitly does not claim medical safety or efficacy.
 - Scraped data never becomes public automatically. It enters a review workflow.
@@ -129,5 +139,8 @@ future job boundary.
 - E2E tests use PostgreSQL, apply committed migrations, verify catalogue import
   idempotency, alias resolution/removal and authenticated user/profile/favorite/matching/
   scoring flows, then remove only namespaced fixture records afterward.
+- Evidence E2E tests cover protected routes, citation validation, approval reset,
+  concurrent/stale revisions and moderation effects on scores and matches, including
+  historical snapshot preservation.
 - GitHub Actions provisions a clean PostgreSQL 17 service for every pull request
   and `main` push before running unit tests, E2E tests and the production build.

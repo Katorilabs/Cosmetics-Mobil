@@ -215,6 +215,7 @@ model IngredientAlias {
 
 model IngredientEvidence {
   id           String         @id @default(uuid()) @db.Uuid
+  revision     Int            @default(1)
   ingredientId String         @map("ingredient_id") @db.Uuid
   title        String
   summary      String
@@ -315,12 +316,13 @@ model ScoreSnapshot {
   score          Decimal        @db.Decimal(5, 2)
   confidence     Decimal        @db.Decimal(5, 4)
   scoringVersion Int            @map("scoring_version")
+  evidenceKey    String         @default("legacy") @map("evidence_key")
   explanation    Json
   variant        ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
   formula        FormulaVersion @relation(fields: [formulaId], references: [id], onDelete: Cascade)
   createdAt      DateTime       @default(now()) @map("created_at")
 
-  @@unique([variantId, formulaId, profileKey, scoringVersion])
+  @@unique([variantId, formulaId, profileKey, scoringVersion, evidenceKey], map: "score_snapshots_inputs_key")
   @@index([variantId, profileKey])
   @@map("score_snapshots")
 }
