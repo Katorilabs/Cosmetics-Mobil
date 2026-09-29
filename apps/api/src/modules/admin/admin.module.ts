@@ -9,6 +9,7 @@ import { EvidenceAdminService } from './evidence-admin.service.js';
 
 @Module({
   imports: [IngredientsModule],
+  exports: [AdminKeyGuard],
   controllers: [CatalogAdminController, EvidenceAdminController],
   providers: [EvidenceAdminService, AdminKeyGuard, CatalogAdminService, CatalogCsvImportService],
 })

@@ -34,7 +34,7 @@ Scraper worker (separate process, later)
 - `favorites`: authenticated, paginated product-variant bookmarks.
 - `matching`: profile-aware variant filtering and reviewed evidence explanations.
 - `scoring`: immutable rule-set versions and idempotent profile/formula score snapshots.
-- Future `reviews`: profile snapshots, moderation and aggregate experience metrics.
+- `reviews`: private profile snapshots, revision-checked moderation, abuse reports and aggregate experience metrics.
 - Future `moderation`: approval workflow for imported and scraped data.
 
 Controllers handle HTTP concerns, services contain use-case logic, and Prisma is
@@ -64,7 +64,21 @@ internal files; shared behavior must be exposed by the owning module.
   This uses the existing admin key boundary; individual reviewer identity and a
   full evidence edit audit log await managed admin roles.
 - Reviews store a profile snapshot so historical aggregates do not change when a
-  user edits their current profile.
+  user edits their current profile. Snapshots contain only skin type, concerns and
+  schema version. Editing review text/rating preserves the original snapshot and
+  returns publication to pending. One review per user/variant is enforced in SQL.
+- Review moderation and editing compare an integer revision atomically. Public
+  review responses omit author identifiers and profile snapshots, and declare plain
+  text for clients to render without HTML interpretation.
+- Experience ratings are aggregated in PostgreSQL, separately from ingredient
+  scores. Similarity means the same recorded skin type and any shared concern; with
+  no reader concerns, only skin type is required. A matching user's own review is
+  included. For similar cohorts below three reviews, mean and distribution are
+  withheld; the count remains available. This is not a statistical confidence claim.
+- Reports are unique per reporter/review/revision. Resolving a report does not change
+  review visibility, and repeat reports do not reopen a resolved report. Admins see
+  both the reported revision and the current review; historic review text is not
+  retained. Deleting reviews or accounts cascades to their reports.
 - Favorites reference product variants, are unique per user/variant pair and are
   removed through database cascades with either owning record.
 - Scores are snapshots tied to a formula and scoring version. Explanations and
@@ -110,7 +124,8 @@ internal files; shared behavior must be exposed by the owning module.
   production authorization design.
 - URLs and scraped payloads must be validated before the worker fetches or stores
   them. Private-network destinations must be rejected to prevent SSRF.
-- User-generated reviews require output encoding, moderation and abuse reporting.
+- User-generated reviews use JSON plain-text responses, explicit moderation and
+  authenticated abuse reports. UI clients must render title/body as text, never HTML.
 - Profile matching treats explicit `avoidInci` entries as hard user preferences.
   Reviewed aliases canonicalize those preferences. Free-text allergies are not
   inferred as INCI names without an explicit user choice.
@@ -142,5 +157,8 @@ future job boundary.
 - Evidence E2E tests cover protected routes, citation validation, approval reset,
   concurrent/stale revisions and moderation effects on scores and matches, including
   historical snapshot preservation.
+- Review E2E tests cover ownership, validation, concurrent submissions/edits,
+  publication filtering, immutable snapshots, similar-profile cohorts, pagination,
+  idempotent reports, report resolution and cascade deletion.
 - GitHub Actions provisions a clean PostgreSQL 17 service for every pull request
   and `main` push before running unit tests, E2E tests and the production build.

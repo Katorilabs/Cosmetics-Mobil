@@ -11,6 +11,7 @@ import { IdentityModule } from './modules/identity/identity.module.js';
 import { MatchingModule } from './modules/matching/matching.module.js';
 import { ProductsModule } from './modules/products/products.module.js';
 import { ProfilesModule } from './modules/profiles/profiles.module.js';
+import { ReviewsModule } from './modules/reviews/reviews.module.js';
 import { ScoringModule } from './modules/scoring/scoring.module.js';
 
 @Module({
@@ -40,6 +41,7 @@ import { ScoringModule } from './modules/scoring/scoring.module.js';
     ProductsModule,
     ProfilesModule,
     ScoringModule,
+    ReviewsModule,
   ],
   providers: [
     {

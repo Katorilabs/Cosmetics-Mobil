@@ -19,6 +19,7 @@ admin paneli ve scraper worker sonraki aşamalarda aynı monorepo içine eklenec
 - [Kimlik doğrulama kurulumu](#kimlik-doğrulama-kurulumu)
 - [Profil bazlı ürün eşleştirme](#profil-bazlı-ürün-eşleştirme)
 - [Açıklanabilir içerik skoru](#açıklanabilir-içerik-skoru)
+- [Yorumlar ve deneyim istatistikleri](#yorumlar-ve-deneyim-istatistikleri)
 - [Kaynak ve kanıt yönetimi](#kaynak-ve-kanıt-yönetimi)
 - [INCI alias ve normalizasyon](#inci-alias-ve-normalizasyon)
 - [CSV katalog importu](#csv-katalog-importu)
@@ -80,6 +81,8 @@ kural sürümü ve güven seviyesi kullanıcıya açıklanacaktır.
 - Kanonik INCI adı, normalize anahtar ve moderasyonlu alias çözümleme altyapısı
 - Kaynak atıflı kanıt oluşturma, düzenleme, onaylama ve onay geri çekme API’si
 - Revizyon denetimiyle eşzamanlı kanıt düzenleme/moderasyon koruması
+- Profil snapshot’lı kullanıcı yorumları, moderasyon ve revizyon bazlı şikâyet akışı
+- Yayınlanmış yorumlardan genel ve benzer profil deneyim istatistikleri
 - Değiştirilemez kural sürümü, profil hash'i ve idempotent snapshot kullanan skor motoru
 - API/veritabanı health kontrolü
 - Swagger/OpenAPI dokümantasyonu
@@ -98,7 +101,6 @@ Henüz hazır olmayan ana parçalar:
 - Sağlayıcı hesabı ile uygulama verisini birlikte silen hesap kapatma akışı
 - Mobil Expo uygulaması
 - Scraper worker ve moderasyon ekranı
-- Yorum endpointleri
 - Üretim deployment altyapısı
 
 ## Teknoloji yığını
@@ -140,6 +142,7 @@ cosmedia/
 │       │       ├── matching/
 │       │       ├── profiles/
 │       │       ├── products/
+│       │       ├── reviews/
 │       │       └── scoring/
 │       ├── jest.config.cjs
 │       └── package.json
@@ -295,6 +298,8 @@ Mevcut public endpointler:
 | GET | `/api/v1/health` | API ve PostgreSQL hazır mı? |
 | GET | `/api/v1/products` | Yayındaki ürünleri sayfalı listeler |
 | GET | `/api/v1/products/:id` | Ürün, varyant, görsel ve aktif INCI formülü |
+| GET | `/api/v1/variants/:variantId/reviews` | Yayınlanmış yorumları kimlik/profil bilgisi olmadan sayfalı listeler |
+| GET | `/api/v1/variants/:variantId/review-statistics` | Yayınlanmış yorumların puan ortalaması ve dağılımı |
 
 Kullanıcı endpointleri `Authorization: Bearer <access-token>` header'ı gerektirir:
 
@@ -310,6 +315,12 @@ Kullanıcı endpointleri `Authorization: Bearer <access-token>` header'ı gerekt
 | DELETE | `/api/v1/me/favorites/:variantId` | Favoriyi idempotent kaldırır |
 | GET | `/api/v1/me/product-matches` | Cilt profiline göre açıklanabilir varyant eşleşmelerini listeler |
 | GET | `/api/v1/me/product-scores/:variantId` | Sürümlü profil/formül eşleşme skorunu getirir |
+| GET | `/api/v1/me/reviews` | Kullanıcının tüm durumdaki yorumlarını sayfalı listeler |
+| POST | `/api/v1/me/reviews/:variantId` | Cilt profiliyle onay bekleyen yorum oluşturur |
+| PUT | `/api/v1/me/reviews/:variantId` | Kendi yorumunu günceller ve tekrar onaya gönderir |
+| DELETE | `/api/v1/me/reviews/:variantId` | Kendi yorumunu ve bağlı şikâyetleri idempotent siler |
+| GET | `/api/v1/me/review-statistics/:variantId` | Benzer profil snapshot’larından deneyim istatistikleri |
+| POST | `/api/v1/me/review-reports/:reviewId` | Yayınlanmış yorumun görülen revizyonunu şikâyet eder |
 
 `PUT /me/skin-profile`; `DRY`, `OILY`, `COMBINATION`, `NORMAL`, `SENSITIVE` cilt
 tiplerini ve şemada tanımlı endişeleri kabul eder. Kaçınılan INCI adları normalize
@@ -353,6 +364,10 @@ Admin katalog endpointleri `x-admin-key` header'ı gerektirir:
 | PUT | `/api/v1/admin/catalog/evidence/:id` | Kanıt içeriğini tamamen değiştirir ve onayını kaldırır |
 | POST | `/api/v1/admin/catalog/evidence/:id/approve` | Okunan revizyonu onaylar |
 | POST | `/api/v1/admin/catalog/evidence/:id/revoke` | Kaydı silmeden onayını geri çeker |
+| GET | `/api/v1/admin/reviews` | `status`, `variantId`, `page`, `limit` ile moderasyon kuyruğu |
+| POST | `/api/v1/admin/reviews/:id/moderate` | Revizyon kontrolüyle yayınlar, reddeder veya beklemeye alır |
+| GET | `/api/v1/admin/review-reports` | `state=OPEN|RESOLVED`, `page`, `limit` ile şikâyet kuyruğu |
+| POST | `/api/v1/admin/review-reports/:id/resolve` | Şikâyeti idempotent kapatır; yorum durumunu değiştirmez |
 | GET | `/api/v1/admin/scoring/rules` | Skor kurallarını sürüme göre listeler |
 | POST | `/api/v1/admin/scoring/rule-sets` | Değiştirilemez yeni kural sürümü oluşturur |
 | POST | `/api/v1/admin/scoring/rule-sets/:version/activate` | Bir kural sürümünü atomik olarak aktifleştirir |
@@ -485,6 +500,58 @@ endpointiyle atomik biçimde aktifleştirilir. Eski snapshot'lar karşılaştır
 için korunur. Kanıt onayı geri çekildiğinde veya onaylı içerik/kaynak değiştiğinde
 sonraki skor isteği güncel girdilere ait snapshot'ı kullanır; eski sonuç üzerine
 yazılmaz. Migration öncesi kayıtlar `evidenceKey=legacy` ile korunur.
+
+## Yorumlar ve deneyim istatistikleri
+
+Kullanıcı, aktif ve yayındaki her ürün varyantına tek yorum yazabilir. Oluşturma
+anında cilt profili gereklidir. Sunucu yalnızca `skinType`, `concerns` ve snapshot
+şema sürümünü kaydeder; alerjiler, kaçınılan INCI listesi ve kimlik bilgileri snapshot’a
+eklenmez. Sonraki profil değişiklikleri veya yorum düzenlemeleri bu snapshot’ı
+değiştirmez.
+
+`POST /me/reviews/:variantId` gövdesi:
+
+```json
+{"rating": 4, "title": "Kullanım deneyimim", "body": "Ürünü rutinimde nasıl kullandığım ve gözlemlerim."}
+```
+
+Puan 1–5 arasında tam sayı olmalıdır. Başlık (en fazla 200 karakter) ve metin
+(en fazla 5.000 karakter) isteğe bağlıdır. Aynı varyanta ikinci yorum `409
+REVIEW_ALREADY_EXISTS` döndürür. Oluşturulan yorum `PENDING`, `revision=1` ile başlar.
+`PUT` tüm içerik alanlarını ve güncel `revision` değerini ister; gönderilmeyen veya
+`null` başlık/metin temizlenir. Her düzenleme onayı kaldırır ve revizyonu artırır.
+Kullanıcı başka bir kullanıcının yorumunu güncelleyemez veya silemez. Arşivlenmiş
+ürünün yorumu da kullanıcı tarafından silinebilir; yeni yorum veya düzenleme yapılamaz.
+
+Admin `POST /admin/reviews/:id/moderate` isteğinde örneğin
+`{"revision":1,"status":"PUBLISHED"}` gönderir. `PENDING`, `PUBLISHED`, `REJECTED`
+durumları desteklenir. Eski revizyonla düzenleme veya moderasyon `409
+REVIEW_REVISION_CONFLICT` döndürür. Yalnızca `PUBLISHED` yorumlar, ürün ve varyant da
+görünür olduğu sürece public listelerde ve istatistiklerde yer alır.
+
+Public listeler kullanıcı kimliği, e-posta, ad veya profil snapshot’ı içermez.
+Metinler JSON içinde **düz metin** olarak döner (`textFormat=PLAIN_TEXT`); istemciler
+bunları metin bileşeniyle göstermeli, HTML olarak yorumlamamalıdır.
+
+Genel istatistikler `count`, `averageRating` ve 1–5 puan dağılımını döndürür. Yorum
+yoksa ortalama ve dağılım `null` olur. Benzer profil hesabı, okuyucunun güncel cilt
+tipiyle yorumun kayıtlı cilt tipini eşleştirir. Okuyucunun cilt endişesi varsa en az
+bir ortak endişe gerekir; yoksa yalnızca cilt tipi kullanılır. Kişinin kendi yayındaki
+yorumu da bu kurala uyuyorsa hesaba katılır. Benzer profilde üçten az yayınlanmış
+yorum varsa sayı gösterilir, ortalama ve dağılım `null`, `sufficientData=false` olur.
+Bu eşik istatistiksel güven garantisi değildir. Kullanıcı deneyimi puanları içerik
+skorunu değiştirmez ve tıbbi etkinlik/güvenlik sonucu olarak sunulmaz.
+
+Şikâyet için `POST /me/review-reports/:reviewId` gövdesi örneğin
+`{"revision":2,"reason":"SPAM"}` olmalıdır. Nedenler: `SPAM`, `OFFENSIVE`,
+`MISLEADING`, `OTHER`. Aynı kullanıcı aynı yorum revizyonunu tekrar bildirdiğinde
+mevcut şikâyet döner; kapatılmış şikâyet tekrar açılmaz. Yeni revizyon ayrıca
+bildirilebilir. Şikâyet tek başına yorumu yayından kaldırmaz. Admin kuyruğunda
+`reviewRevision` bildirilen sürümü, `review.revision` güncel sürümü gösterir;
+moderatör değişmiş içeriği tekrar incelemelidir. Şikâyetin kapatılması ile yorumun
+reddedilmesi ayrı işlemlerdir. Yorum veya hesap silindiğinde bağlı şikâyetler de silinir.
+Bireysel moderatör kimliği ve tam düzenleme geçmişi, managed admin rolleri aşamasına
+bırakılmıştır.
 
 ## Kaynak ve kanıt yönetimi
 
@@ -852,7 +919,7 @@ Pull request açıklamasında şunlar bulunmalı:
 - [x] Kaynak atıfları ve bilimsel kanıt yönetimi admin API’si
 - [x] Versiyonlanmış skor kuralları
 - [x] Skor açıklaması ve veri güven seviyesi
-- Benzer profil yorum istatistikleri
+- [x] Yorum API’si, moderasyon/şikâyet akışı ve benzer profil yorum istatistikleri
 
 ### Aşama 4 — Mobil MVP
 
