@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "Cosmedia",
+    "slug": "cosmedia",
+    "scheme": "cosmedia",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "plugins": ["expo-router"],
+    "web": { "bundler": "metro", "output": "single", "name": "Cosmedia" },
+    "ios": { "supportsTablet": true },
+    "experiments": { "typedRoutes": true }
+  }
+}

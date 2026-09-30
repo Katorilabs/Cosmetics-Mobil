@@ -1,4 +1,4 @@
-name: API CI
+name: API and mobile CI
 
 on:
   pull_request:
@@ -38,3 +38,19 @@ jobs:
       - run: npm test
       - run: npm run test:e2e
       - run: npm run build
+
+  mobile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EXPO_PUBLIC_API_URL: https://api.example.com/api/v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run mobile:check
+      - run: npm run mobile:test
+      - run: npm run mobile:export

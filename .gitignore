@@ -7,3 +7,6 @@ coverage/
 !.env.example
 .DS_Store
 apps/api/src/generated/
+.expo/
+apps/mobile/android/
+apps/mobile/ios/

@@ -4,8 +4,8 @@ Cosmedia; kozmetik ürünlerini INCI içerikleriyle birlikte sunan, kullanıcın
 profiliyle ürünleri eşleştiren ve puanların nedenini açıklayan bir mobil uygulama
 projesidir.
 
-Bu repository şu anda projenin üretime uygun backend temelini içerir. Mobil uygulama,
-admin paneli ve scraper worker sonraki aşamalarda aynı monorepo içine eklenecektir.
+Bu repository backend API’sini ve Expo mobil uygulamasının ilk katalog akışını içerir.
+Admin paneli ve scraper worker sonraki aşamalarda aynı monorepo içine eklenecektir.
 
 ## İçindekiler
 
@@ -15,6 +15,7 @@ admin paneli ve scraper worker sonraki aşamalarda aynı monorepo içine eklenec
 - [Repository yapısı](#repository-yapısı)
 - [İlk kurulum](#ilk-kurulum)
 - [Projeyi çalıştırma](#projeyi-çalıştırma)
+- [Mobil uygulamayı çalıştırma](#mobil-uygulamayı-çalıştırma)
 - [API endpointleri](#api-endpointleri)
 - [Kimlik doğrulama kurulumu](#kimlik-doğrulama-kurulumu)
 - [Profil bazlı ürün eşleştirme](#profil-bazlı-ürün-eşleştirme)
@@ -81,6 +82,7 @@ kural sürümü ve güven seviyesi kullanıcıya açıklanacaktır.
 - Kanonik INCI adı, normalize anahtar ve moderasyonlu alias çözümleme altyapısı
 - Kaynak atıflı kanıt oluşturma, düzenleme, onaylama ve onay geri çekme API’si
 - Revizyon denetimiyle eşzamanlı kanıt düzenleme/moderasyon koruması
+- Expo SDK 57 + Expo Router mobil katalog, arama, ürün/INCI detayı ve yorum okuma
 - Profil snapshot’lı kullanıcı yorumları, moderasyon ve revizyon bazlı şikâyet akışı
 - Yayınlanmış yorumlardan genel ve benzer profil deneyim istatistikleri
 - Değiştirilemez kural sürümü, profil hash'i ve idempotent snapshot kullanan skor motoru
@@ -99,7 +101,7 @@ Henüz hazır olmayan ana parçalar:
 
 - Managed auth sağlayıcısındaki login/kayıt ekranları ve rol yönetimi
 - Sağlayıcı hesabı ile uygulama verisini birlikte silen hesap kapatma akışı
-- Mobil Expo uygulaması
+- Mobil login, onboarding, cilt profili, favori ve yorum yazma ekranları
 - Scraper worker ve moderasyon ekranı
 - Üretim deployment altyapısı
 
@@ -126,6 +128,7 @@ Detaylı teknik kararlar için [mimari dokümanını](docs/ARCHITECTURE.md) okuy
 ```text
 cosmedia/
 ├── apps/
+│   ├── mobile/               # Expo Router + React Native katalog MVP
 │   └── api/
 │       ├── prisma/
 │       │   ├── migrations/       # Commit edilen SQL migration'ları
@@ -159,7 +162,6 @@ cosmedia/
 Planlanan yeni dizinler:
 
 ```text
-apps/mobile/          # Expo + React Native
 apps/admin/           # Moderasyon ve katalog yönetimi
 workers/scraper/      # Playwright/Cheerio + BullMQ
 packages/contracts/   # Mobil/API ortak DTO ve şemaları
@@ -288,6 +290,62 @@ docker compose down
 
 > `docker compose down -v` veritabanı volume'ünü ve lokal verileri siler. Yalnızca
 > bilinçli bir sıfırlama gerektiğinde kullanılmalıdır.
+
+## Mobil uygulamayı çalıştırma
+
+```bash
+# Root dizinde, tüm workspace bağımlılıklarını kurar
+npm ci
+cp apps/mobile/.env.example apps/mobile/.env
+
+# Bir terminalde API (PostgreSQL çalışıyor olmalı)
+npm run dev
+
+# Ayrı terminalde Expo; cihaz için QR / iOS / Android seçenekleri
+npm run mobile
+
+# Veya tarayıcı önizlemesi
+npm run mobile:web
+```
+
+Web önizlemesi varsayılan olarak `http://localhost:8081` adresindedir. API’nin
+`CORS_ORIGINS` listesinde bu origin bulunmalıdır. Port değişirse CORS listesini de
+uyarlayın. API ürün döndürmüyorsa örnek katalog için `npm run db:seed` kullanılabilir.
+Uygulama gerçek API’den veri okur; kendi içinde sahte katalog oluşturmaz.
+
+`apps/mobile/.env` içindeki `EXPO_PUBLIC_API_URL` hedefi:
+
+| Ortam | Adres |
+| --- | --- |
+| Tarayıcı / iOS Simulator | `http://localhost:3000/api/v1` |
+| Android Emulator | `http://10.0.2.2:3000/api/v1` |
+| Fiziksel telefon | `http://<bilgisayarın-LAN-IP-adresi>:3000/api/v1` |
+| Yayın paketi | Erişilebilir HTTPS API adresi |
+
+Telefon ve bilgisayar aynı ağda olmalıdır. Telefonda `localhost` bilgisayarı değil
+telefonu gösterir. Environment değişince Expo’yu yeniden başlatın. `EXPO_PUBLIC_*`
+bundle’a yazılır; admin anahtarı, veritabanı adresi veya özel token burada tutulmaz.
+Development sırasında adres girilmezse platforma uygun lokal adres kullanılır;
+üretim bundle’ında adres yoksa açık bir yapılandırma hatası gösterilir.
+
+Mevcut mobil akış: ürün/marka arama → sayfalı katalog → ürün ve varyant seçimi →
+INCI açıklamaları ve kaynak → yayınlanmış yorumlar / puan dağılımı. Ayrıca Cosmedia
+rehber ekranı bulunur. Görseli olmayan ürünler açıkça işaretlenir; yükleme, boş
+sonuç, zaman aşımı, bağlantı hatası ve yeniden deneme durumları desteklenir.
+Yorumlar düz metin olarak gösterilir. Profil girişi, kişisel skor, favoriler ve yorum
+oluşturma akışları henüz mobil ekrana bağlanmamıştır.
+
+```bash
+npm run mobile:check  # TypeScript
+npm run mobile:test   # API sözleşmesi, hata, iptal ve zaman aşımı testleri
+EXPO_PUBLIC_API_URL=https://api.example.com/api/v1 npm run mobile:export
+```
+
+Export Android/iOS JavaScript-Hermes ve web bundle’larını `apps/mobile/dist` içine
+üretir. Bu işlem APK/IPA derlemesi veya mağaza yayını değildir. Gerçek cihazdaki
+native davranış ve paket imzalama için sonraki aşamada development build gerekir.
+Kurulum [Expo Router](https://docs.expo.dev/router/installation/) ve
+[workspace rehberini](https://docs.expo.dev/guides/monorepos/) izler.
 
 ## API endpointleri
 
@@ -923,11 +981,13 @@ Pull request açıklamasında şunlar bulunmalı:
 
 ### Aşama 4 — Mobil MVP
 
-- Expo + React Native + TypeScript
-- Expo Router navigasyonu
+- [x] Expo + React Native + TypeScript katalog uygulaması
+- [x] Expo Router navigasyonu
 - Onboarding ve cilt profili
-- Ürün arama/filtreleme
-- Ürün ve INCI detay ekranı
+- [x] Ürün/marka arama ve katalog sayfalama
+- Kategori/marka seçmeli gelişmiş filtreleme
+- [x] Ürün ve INCI detay ekranı
+- [x] Yayınlanmış yorumlar ve genel deneyim istatistikleri
 - Favoriler ve yorumlar
 
 ### Aşama 5 — Veri toplama ve operasyon

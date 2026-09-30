@@ -162,3 +162,37 @@ future job boundary.
   idempotent reports, report resolution and cascade deletion.
 - GitHub Actions provisions a clean PostgreSQL 17 service for every pull request
   and `main` push before running unit tests, E2E tests and the production build.
+
+## Mobile catalog client
+
+`apps/mobile` is an Expo SDK 57 / React Native 0.86 application using Expo Router.
+The root npm workspace and lockfile own installation. Expo's standard Metro config
+handles the monorepo without custom resolver aliases.
+
+- Screens: public catalog/search, product detail with variant and formula selection,
+  published reviews and rating distribution, explanatory guide and not-found page.
+- `EXPO_PUBLIC_API_URL` points to the versioned API root. The client never embeds
+  admin credentials or database configuration; production requires an explicit URL.
+- Zod validates the fields used by the UI. Unknown API fields are discarded. Errors
+  use localized safe messages and retain request IDs without exposing server bodies.
+- Each request has a timeout and an abort signal. Resource keys isolate products,
+  searches, pages and variants so late responses cannot replace newer screen data.
+- The catalog uses bounded server pagination and debounced search. Review statistics
+  and review text load independently, so one endpoint failure does not hide the other.
+- Review title/body and ingredient text are rendered with React Native Text, never
+  injected as HTML. Remote image/source links accept HTTP(S) only.
+- No authentication or profile data is stored yet. Login/onboarding, favorites,
+  personalized scores and writing/reporting reviews remain a subsequent mobile phase.
+- CI checks types, client transport contracts and Android/iOS/web exports. Export
+  validates bundles, not a signed native binary or physical-device behavior.
+
+Mobile dependency verification (2026-09-30): Expo Doctor passes all 21 checks.
+Root overrides align React and native peers with the SDK template to prevent
+Prisma Studio's React peer resolution from producing duplicate native dependencies.
+The existing fast-uri and Swagger js-yaml pins were advanced to patched releases.
+`npm audit` still reports 13 moderate dependency-chain findings (zero high/critical):
+Expo Router's CommonJS query-string decoder uses decode-uri-component, and Expo's
+Xcode tooling uses uuid 7. The fixed decoder is ESM-only, so an unverified major
+module-format override was not introduced. Track upstream compatible fixes before
+public release; the UUID finding concerns v3/v5/v6 buffer calls, whereas xcode's
+observed use is v4 ID generation. Native binary/device validation remains pending.
